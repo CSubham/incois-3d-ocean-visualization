@@ -1,0 +1,77 @@
+{
+  "source_url": "https://erddap.incois.gov.in/erddap/griddap/incois_argo_10d_VAM",
+  "metadata_url": "https://erddap.incois.gov.in/erddap/info/incois_argo_10d_VAM/index.json",
+  "request_url": "https://erddap.incois.gov.in/erddap/griddap/incois_argo_10d_VAM.nc?TEMP%5B%282026-07-30T00:00:00Z%29:1:%282026-07-30T00:00:00Z%29%5D%5B%285.0%29:1:%281000.0%29%5D%5B%285.5%29:1:%2819.5%29%5D%5B%2865.5%29:1:%2884.5%29%5D,SAL%5B%282026-07-30T00:00:00Z%29:1:%282026-07-30T00:00:00Z%29%5D%5B%285.0%29:1:%281000.0%29%5D%5B%285.5%29:1:%2819.5%29%5D%5B%2865.5%29:1:%2884.5%29%5D",
+  "selected_time": "2026-07-30T00:00:00Z",
+  "latitude_bounds_degrees_north": [
+    5.5,
+    19.5
+  ],
+  "longitude_bounds_degrees_east": [
+    65.5,
+    84.5
+  ],
+  "selected_depths_meters": [
+    5.0,
+    10.0,
+    20.0,
+    30.0,
+    50.0,
+    75.0,
+    100.0,
+    125.0,
+    150.0,
+    200.0,
+    250.0,
+    300.0,
+    400.0,
+    500.0,
+    600.0,
+    700.0,
+    800.0,
+    900.0,
+    1000.0
+  ],
+  "variables_included": [
+    "SAL",
+    "TEMP",
+    "ZAX",
+    "latitude",
+    "longitude",
+    "time"
+  ],
+  "variables_excluded": [
+    "SERR",
+    "TERR"
+  ],
+  "output_path": "data/raw/model/incois_argo_10d_vam/indian_ocean_sample.nc",
+  "dimensions": {
+    "time": 1,
+    "ZAX": 19,
+    "latitude": 15,
+    "longitude": 20
+  },
+  "file_size_bytes": 50024,
+  "metadata_inspection": {
+    "data_variables": [
+      "SAL",
+      "SERR",
+      "TEMP",
+      "TERR"
+    ],
+    "dimensions": [
+      "ZAX",
+      "latitude",
+      "longitude",
+      "time"
+    ]
+  },
+  "coordinate_units": {
+    "time": "UTC",
+    "ZAX": "METERS",
+    "latitude": "degrees_north",
+    "longitude": "degrees_east"
+  },
+  "generated_at_utc": "2026-09-13T20:54:00.886414+00:00",
+  "tls_verification_disabled": true
+}

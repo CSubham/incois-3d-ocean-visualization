@@ -1,0 +1,83 @@
+{
+  "columns": [
+    "platform_number",
+    "cycle_number",
+    "time",
+    "latitude",
+    "longitude",
+    "pres",
+    "temp",
+    "psal",
+    "chla",
+    "chla_adjusted",
+    "chla_qc"
+  ],
+  "column_units": [
+    "",
+    "",
+    "UTC",
+    "degrees_north",
+    "degrees_east",
+    "decibar",
+    "degree_Celsius",
+    "psu",
+    "mg/m3",
+    "mg/m3",
+    ""
+  ],
+  "row_count": 16108,
+  "distinct_platform_number": 8,
+  "value_ranges": {
+    "pres": [
+      -0.39,
+      2001.9
+    ],
+    "temp": [
+      2.7936,
+      30.021
+    ],
+    "psal": [
+      34.319,
+      37.189
+    ],
+    "chla": [
+      0.0002,
+      2.0174
+    ],
+    "chla_adjusted": [
+      -0.0187,
+      1.2584
+    ]
+  },
+  "populated_counts": {
+    "pres": 16108,
+    "temp": 16101,
+    "psal": 16101,
+    "chla": 8691,
+    "chla_adjusted": 8688
+  },
+  "source": "Argo GDAC synthetic BGC profiles (ArgoFloats-synthetic-BGC)",
+  "provider": "Ifremer ERDDAP / Argo Program",
+  "source_url": "https://erddap.ifremer.fr/erddap/tabledap/ArgoFloats-synthetic-BGC",
+  "format": "delimited text (CSV)",
+  "selected_time_window": [
+    "2024-09-01T00:00:00Z",
+    "2024-10-01T00:00:00Z"
+  ],
+  "latitude_bounds_degrees_north": [
+    5.5,
+    19.5
+  ],
+  "longitude_bounds_degrees_east": [
+    65.5,
+    84.5
+  ],
+  "closes_gaps": [
+    "DIR-002 chlorophyll",
+    "DIR-005 BGC",
+    "DIR-006 chlorophyll observation attribute"
+  ],
+  "real_time_vs_delayed_mode": "chla vs chla_adjusted, same convention as core Argo",
+  "output_path": "data/raw/obs/argo_bgc_synthetic/indian_ocean_sample.csv",
+  "generated_at_utc": "2026-09-13T22:23:34.674489+00:00"
+}

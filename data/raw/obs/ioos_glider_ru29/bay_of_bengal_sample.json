@@ -1,0 +1,92 @@
+{
+  "columns": [
+    "trajectory",
+    "profile_id",
+    "time",
+    "latitude",
+    "longitude",
+    "depth",
+    "pressure",
+    "temperature",
+    "salinity",
+    "conductivity",
+    "density"
+  ],
+  "column_units": [
+    "",
+    "",
+    "UTC",
+    "degrees_north",
+    "degrees_east",
+    "m",
+    "dbar",
+    "Celsius",
+    "1",
+    "S m-1",
+    "kg m-3"
+  ],
+  "row_count": 4010,
+  "distinct_profile_id": 42,
+  "value_ranges": {
+    "depth": [
+      1.03,
+      960.38
+    ],
+    "pressure": [
+      1.03,
+      960.38
+    ],
+    "temperature": [
+      6.6299,
+      29.0287
+    ],
+    "salinity": [
+      33.7355,
+      35.108
+    ],
+    "conductivity": [
+      3.5309,
+      5.5751
+    ],
+    "density": [
+      1021.2321,
+      1031.7837
+    ],
+    "latitude": [
+      8.0161,
+      8.6651
+    ],
+    "longitude": [
+      81.287,
+      82.5729
+    ]
+  },
+  "populated_counts": {
+    "depth": 4002,
+    "pressure": 4002,
+    "temperature": 4002,
+    "salinity": 4002,
+    "conductivity": 4002,
+    "density": 4002,
+    "latitude": 4010,
+    "longitude": 4010
+  },
+  "source": "IOOS Glider DAC, deployment ru29-20180812T0220",
+  "provider": "Rutgers University / US IOOS",
+  "source_url": "https://gliders.ioos.us/erddap/tabledap/ru29-20180812T0220",
+  "platform_type": "Slocum Glider",
+  "instrument": "instrument_ctd (glider-mounted CTD)",
+  "format": "delimited text (CSV)",
+  "selected_time_window": [
+    "2018-08-12T00:00:00Z",
+    "2018-08-17T00:00:00Z"
+  ],
+  "region": "Bay of Bengal; deployment track 1.09-8.67N, 79.95-82.98E",
+  "closes_gaps": [
+    "DIR-004 Glider real-time observations",
+    "DIR-005 Glider"
+  ],
+  "caveat": "CTD here is a glider-mounted sensor, not a standalone ship CTD cast. RESOLVED: standalone ship CTD casts are now held separately at data/raw/obs/goship_i07n_ctd/. This deployment therefore satisfies DIR-005 Glider; DIR-005 CTD is satisfied by the GO-SHIP source.",
+  "output_path": "data/raw/obs/ioos_glider_ru29/bay_of_bengal_sample.csv",
+  "generated_at_utc": "2026-09-13T22:23:34.681669+00:00"
+}

@@ -1,0 +1,87 @@
+{
+  "source_url": "https://erddap.incois.gov.in/erddap/griddap/incois_valueadded_products_datasets",
+  "metadata_url": "https://erddap.incois.gov.in/erddap/info/incois_valueadded_products_datasets/index.json",
+  "request_url": "https://erddap.incois.gov.in/erddap/griddap/incois_valueadded_products_datasets.nc?GEO_U%5B%282019-03-30T00:00:00Z%29:1:%282019-03-30T00:00:00Z%29%5D%5B%285.5%29:1:%2819.5%29%5D%5B%2865.5%29:1:%2884.5%29%5D,GEO_V%5B%282019-03-30T00:00:00Z%29:1:%282019-03-30T00:00:00Z%29%5D%5B%285.5%29:1:%2819.5%29%5D%5B%2865.5%29:1:%2884.5%29%5D",
+  "selected_time": "2019-03-30T00:00:00Z",
+  "latitude_bounds_degrees_north": [
+    5.5,
+    19.5
+  ],
+  "longitude_bounds_degrees_east": [
+    65.5,
+    84.5
+  ],
+  "variables_included": [
+    "GEO_U",
+    "GEO_V",
+    "latitude",
+    "longitude",
+    "time"
+  ],
+  "current_variable_metadata": {
+    "GEO_U": {
+      "long_name": "Geostrophic U (cm/sec)",
+      "units": "cm/sec",
+      "units_source": "long_name; live metadata has no separate units attribute"
+    },
+    "GEO_V": {
+      "long_name": "Geostrophic V (cm/sec)",
+      "units": "cm/sec",
+      "units_source": "long_name; live metadata has no separate units attribute"
+    }
+  },
+  "output_path": "data/raw/model/incois_valueadded_currents/indian_ocean_sample.nc",
+  "dimensions": {
+    "time": 1,
+    "latitude": 15,
+    "longitude": 20
+  },
+  "valid_value_counts": {
+    "GEO_U": 203,
+    "GEO_V": 192
+  },
+  "file_size_bytes": 6232,
+  "metadata_inspection": {
+    "available_data_variables": [
+      "D20",
+      "D26",
+      "DYN_HT",
+      "GEO_U",
+      "GEO_V",
+      "HTCNT",
+      "ILD",
+      "MLD"
+    ],
+    "dimensions": [
+      "latitude",
+      "longitude",
+      "time"
+    ],
+    "current_variable_metadata": {
+      "GEO_U": {
+        "long_name": "Geostrophic U (cm/sec)",
+        "units": "cm/sec",
+        "units_source": "long_name; live metadata has no separate units attribute"
+      },
+      "GEO_V": {
+        "long_name": "Geostrophic V (cm/sec)",
+        "units": "cm/sec",
+        "units_source": "long_name; live metadata has no separate units attribute"
+      }
+    }
+  },
+  "coordinate_units": {
+    "time": "UTC",
+    "latitude": "degrees_north",
+    "longitude": "degrees_east"
+  },
+  "generated_at_utc": "2026-09-13T20:56:33.139198+00:00",
+  "tls_verification_disabled": true,
+  "known_defect": {
+    "status": "RETAINED AS A TEST FIXTURE - DO NOT USE AS CURRENT DATA",
+    "cf_violation": "GEO_U and GEO_V carry no units attribute; unit cm/sec appears only inside long_name. Fails STD-001, so S2 should reject this file.",
+    "physical_defect": "Geostrophic velocity is diagnosed as -(g/f) d(eta)/dy across latitudes -29.5 to 29.5, including the equator where the Coriolis parameter approaches zero. Measured over the full 2004-2019 record, ~15% of cells exceed 100 cm/s at every date. In the -1 to +1 degree band the median speed is 96 cm/s and the maximum is 2813 cm/s. At -30 to -20 degrees, where geostrophy is valid and the water is deep, 0.0% of cells exceed 100 cm/s.",
+    "replaced_by": "data/raw/model/hycom_glby008_expt930/ (dynamical model, no geostrophic singularity)",
+    "why_kept": "Exercises the S2 CF-validation reject branch against real data rather than a synthetic fixture."
+  }
+}

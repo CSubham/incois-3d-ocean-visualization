@@ -1,0 +1,82 @@
+{
+  "source": "INCOIS ERDDAP tabledap, Indian_ARGO_Floats (point observations)",
+  "source_url": "https://erddap.incois.gov.in/erddap/tabledap/Indian_ARGO_Floats",
+  "format": "delimited text (CSV) - deliberately chosen to exercise DIR-007 text half and ING-002",
+  "selected_time_window": [
+    "2024-09-01T00:00:00Z",
+    "2024-09-10T00:00:00Z"
+  ],
+  "latitude_bounds_degrees_north": [
+    5.5,
+    19.5
+  ],
+  "longitude_bounds_degrees_east": [
+    65.5,
+    84.5
+  ],
+  "columns": [
+    "PLATFORM_NUMBER",
+    "CYCLE_NUMBER",
+    "time",
+    "latitude",
+    "longitude",
+    "PRES",
+    "TEMP",
+    "TEMP_ADJUSTED",
+    "TEMP_QC",
+    "PSAL",
+    "PSAL_ADJUSTED",
+    "PSAL_QC"
+  ],
+  "column_units": [
+    "",
+    "",
+    "UTC",
+    "degrees_north",
+    "degrees_east",
+    "decibar",
+    "degree_Celsius",
+    "degree_Celsius",
+    "",
+    "PSU",
+    "PSU",
+    ""
+  ],
+  "row_count": 2929,
+  "distinct_floats": 12,
+  "float_ids": [
+    "1902671",
+    "1902672",
+    "2902203",
+    "2902273",
+    "2903892",
+    "4903777",
+    "4903783",
+    "5907082",
+    "5907085",
+    "7901128",
+    "7901136",
+    "7902200"
+  ],
+  "real_time_vs_delayed_mode": {
+    "note": "Argo encodes delivery mode per row: *_ADJUSTED is populated only after delayed-mode QC. This is the supersession key for DIR-004.",
+    "TEMP_populated": 2929,
+    "TEMP_ADJUSTED_populated": 1992,
+    "PSAL_populated": 2929,
+    "PSAL_ADJUSTED_populated": 1992,
+    "supersession_key": "PLATFORM_NUMBER + CYCLE_NUMBER + PRES"
+  },
+  "satisfies": [
+    "DIR-004 (Argo real-time and delayed-mode)",
+    "DIR-005 (Argo portion)",
+    "DIR-006 (lat, lon, pressure-as-depth, time, temperature, salinity)",
+    "DIR-007 (delimited text half)",
+    "ING-002 (delimited text parsing)"
+  ],
+  "does_not_satisfy": [
+    "DIR-005 Glider, CTD, BGC - absent from THIS dataset and from INCOIS ERDDAP; supplied elsewhere: Glider at obs/ioos_glider_ru29/, CTD at obs/goship_i07n_ctd/, BGC at obs/argo_bgc_synthetic/",
+    "DIR-006 chlorophyll - not in this dataset; supplied by obs/argo_bgc_synthetic/"
+  ],
+  "output_path": "data/raw/obs/incois_argo_floats/indian_ocean_sample.csv",
+  "generated_at_utc": "2026-09-13T22:11:01.083525+00:00"
+}

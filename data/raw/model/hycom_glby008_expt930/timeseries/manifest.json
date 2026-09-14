@@ -1,0 +1,66 @@
+{
+  "source": "HYCOM + NCODA Global 1/12 deg Analysis (GLBy0.08, expt_93.0)",
+  "source_url": "https://tds.hycom.org/thredds/ncss/GLBy0.08/expt_93.0",
+  "purpose": "Closes DIR-003 'multiple time steps'; also the input for MVR-005 and UIC-003 time animation later.",
+  "acquisition_note": "The NCSS time_start/time_end range request never responded (900s, 0 bytes). Each step was fetched as its own single-time request instead, which also mirrors how operational model output actually arrives: one file per run.",
+  "variables": [
+    "water_temp",
+    "water_u",
+    "water_v"
+  ],
+  "latitude_bounds_degrees_north": [
+    5.5,
+    19.5
+  ],
+  "longitude_bounds_degrees_east": [
+    65.5,
+    84.5
+  ],
+  "horizontal_stride": 6,
+  "vertical_stride": 4,
+  "time_step_count": 4,
+  "time_steps": [
+    {
+      "file": "2024-09-01.nc",
+      "time_utc": "2024-09-01T12:00:00Z",
+      "dimensions": {
+        "time": 1,
+        "depth": 10,
+        "lat": 59,
+        "lon": 40
+      }
+    },
+    {
+      "file": "2024-09-02.nc",
+      "time_utc": "2024-09-02T12:00:00Z",
+      "dimensions": {
+        "time": 1,
+        "depth": 10,
+        "lat": 59,
+        "lon": 40
+      }
+    },
+    {
+      "file": "2024-09-03.nc",
+      "time_utc": "2024-09-03T12:00:00Z",
+      "dimensions": {
+        "time": 1,
+        "depth": 10,
+        "lat": 59,
+        "lon": 40
+      }
+    },
+    {
+      "file": "2024-09-04.nc",
+      "time_utc": "2024-09-04T12:00:00Z",
+      "dimensions": {
+        "time": 1,
+        "depth": 10,
+        "lat": 59,
+        "lon": 40
+      }
+    }
+  ],
+  "verified_distinct": "consecutive-day mean |delta u| approx 0.05-0.06 m/s; checksums differ per step",
+  "generated_at_utc": "2026-09-13T23:07:10.829960+00:00"
+}

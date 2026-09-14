@@ -1,0 +1,36 @@
+{
+  "source": "GO-SHIP / WOCE line I07N, cruise 33RO20180423",
+  "provider": "CCHDO (CLIVAR and Carbon Hydrographic Data Office), UC San Diego",
+  "ship": "R/V Ronald H. Brown",
+  "source_url": "https://cchdo.ucsd.edu/data/39699/33RO20180423_ctd.nc",
+  "cruise_url": "https://cchdo.ucsd.edu/cruise/33RO20180423",
+  "format": "CF NetCDF-4 (Conventions: CF-1.8 CCHDO-1.0, featureType: profile)",
+  "file_sha256": "2fb7b88abc9a350728f4480497b5519b32b90edf36f3ab29957b701eec72a34d",
+  "sha256_verified_against_provider": true,
+  "stored_unmodified": "Yes - the pristine provider file is kept so the published hash stays verifiable. Subsetting happens downstream in S2/S4, not here.",
+  "closes_gap": "DIR-005 CTD under the strict reading - standalone ship CTD casts, not a glider-mounted sensor",
+  "why_this_is_a_true_CTD_source": [
+    "Fixed hydrographic stations with expocode, section_id, station and cast identifiers, not a drifting float WMO number",
+    "Approximately 1 dbar vertical resolution (mean 3595 levels per in-box profile)",
+    "Reaches 3860 dbar, well past the ~2000 dbar Argo limit",
+    "Ship-occupied casts on a GO-SHIP repeat hydrography line"
+  ],
+  "cruise_extent": {"profiles": 124, "latitude": [-30.0, 18.0], "longitude": [51.43, 69.48],
+                    "dates": ["2018-04-28", "2018-06-04"]},
+  "within_project_box": {
+    "box_latitude_degrees_north": [5.5, 19.5], "box_longitude_degrees_east": [65.5, 84.5],
+    "profiles": 12, "stations": "113-124", "region": "Arabian Sea", "dates": ["2018-06-01", "2018-06-04"],
+    "levels_per_profile": {"min": 3186, "max": 3858, "mean": 3595},
+    "value_ranges": {
+      "pressure_dbar": [3.0, 3860.0],
+      "ctd_temperature_degC": [1.698, 31.355],
+      "ctd_salinity": [34.737, 36.697],
+      "ctd_oxygen_umol_kg": [1.5, 216.7]
+    },
+    "science_note": "The low oxygen minimum (1.5 umol/kg) is the Arabian Sea oxygen minimum zone, which is the expected signal for this region."
+  },
+  "variables_of_interest": ["latitude","longitude","time","pressure","ctd_temperature","ctd_salinity",
+                            "ctd_oxygen","station","cast","expocode","section_id","btm_depth"],
+  "qc_vocabulary": "WOCE quality flags in *_qc variables (standard_name: status_flag) - a fourth QC vocabulary alongside core Argo, BGC-Argo and glider QARTOD",
+  "note": "NetCDF-4/HDF5, not NetCDF-3 classic. The ingestion reader must handle both."
+}
