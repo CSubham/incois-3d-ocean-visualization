@@ -1,21 +1,21 @@
 # Data layout
 
-The directory structure mirrors the path convention in the LLD (S1 Data Sources,
-S2 Data Ingestion, S3 Data Storage), so the local development layout matches the
-deployed share and the same relative paths work in both.
+This directory is the local research-fixture layout. It does not define the
+runtime stage ownership or the deployed storage path in the LLD.
 
 ```
 data/
   raw/          files as they arrive, never modified in place
     model/      gridded fields, one directory per feed
     obs/        point observations, one directory per feed
-  curated/      S2 writes canonical CF NetCDF here
-  rejected/     S2 moves files that fail CF or dimension checks here, with a reason
+  curated/      reserved for accepted copies when using a local S3 storage adapter
+  rejected/     retained rejection fixtures or evidence; S2 does not move files here
 ```
 
 Every data file has a `.json` sidecar next to it recording the source URL, the exact
-request, the spatial and temporal bounds, value ranges and valid-value counts. The
-sidecar is the provenance record; do not separate it from its data file.
+request, the spatial and temporal bounds, value ranges and valid-value counts. This
+is acquisition evidence, not a substitute for the S2 validation manifest or the S3
+catalogue record; do not separate it from its data file.
 
 ## raw/model — gridded fields
 
@@ -50,4 +50,5 @@ Two NetCDF generations also arrive: NetCDF-3 classic (HYCOM, INCOIS) and NetCDF-
 Delayed-mode supersession for Argo keys on `PLATFORM_NUMBER` + `CYCLE_NUMBER` + `PRES`:
 prefer the `_ADJUSTED` value where populated, fall back to the raw value where not.
 
-`curated/` and `rejected/` are empty by design and are written by S2 at runtime.
+`curated/` and `rejected/` are empty by design. S2 returns acceptance or rejection;
+durable accepted data is written only through the S3 storage interface.

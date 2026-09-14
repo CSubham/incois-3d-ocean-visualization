@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test and type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node (S6/S7 surfaces, when they begin)
+node_modules/
+.vite/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Stage output written at runtime by S2.
+# The folders are tracked via .gitkeep; their contents are not.
+data/curated/*
+data/rejected/*
+!data/curated/.gitkeep
+!data/rejected/.gitkeep
+
+# Not ignored on purpose: docs, lockfiles, source, sample data under
+# data/raw/, and reproducible build configuration.
