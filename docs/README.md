@@ -1,5 +1,8 @@
 # Documentation
 
+**[STATUS.md](STATUS.md) is the orientation page.** It says what is built,
+which documents are authoritative, and where the code departs from them.
+
 Global documentation — system-wide truth that affects more than one surface.
 Implementation detail specific to a single surface lives in that surface's own
 `docs/` folder instead.

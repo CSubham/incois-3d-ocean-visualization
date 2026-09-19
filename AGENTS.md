@@ -37,6 +37,9 @@ S6 3D Rendering → S7 UI`
 Stage order is fixed by the HLSA. S2 is the only surface currently scaffolded,
 at `ingestion/`.
 
+Read **`docs/STATUS.md`** first. It is the one page that says what is built,
+what is not, and which document currently governs what.
+
 ## Rules
 
 - Never invent a requirement ID. The 39 in the SRS are the complete set.

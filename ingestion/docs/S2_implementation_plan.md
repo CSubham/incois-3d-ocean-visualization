@@ -1,10 +1,22 @@
+> **SUPERSEDED — kept for history, not for guidance.**
+>
+> This plan describes a design that no longer exists. It was replaced by the
+> rebuild of 19 September 2026: there is no source registry, no semantic
+> mapper stage, and no three-slot `grid`/`profiles`/`manifest` handoff.
+>
+> For what is actually built, read **`../README.md`**.
+> For why it differs, read **`conflicts-with-earlier-documents.md`**.
+>
+> Nothing below has been edited. It is the reasoning that led to the first
+> implementation, and the prior-art notes in it remain sound.
+
 ## S2 Implementation Plan
 
 How the S2 stage defined in `../../docs/architecture/` is proposed to be built.
 This is an implementation note, not a design authority. The locked SRS and HLSA
 govern. The LLD remains under active revision.
 
-Status: the core path is built and passing. See `../README.md`.
+Status: superseded. See the note above.
 
 ### The flow
 
