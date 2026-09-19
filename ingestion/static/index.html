@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ocean Data Import</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap"><span class="brand">Ocean Data Import</span></div>
+</header>
+
+<div class="wrap">
+
+  <ol class="steps" id="steps">
+    <li data-step="1"><span class="dot">1</span> Sources</li>
+    <li data-step="2"><span class="dot">2</span> Dataset</li>
+    <li data-step="3"><span class="dot">3</span> Variables</li>
+    <li data-step="4"><span class="dot">4</span> Review &amp; Import</li>
+  </ol>
+
+  <!-- Step 1 ------------------------------------------------------------ -->
+  <section class="panel" id="step1">
+    <h1>Choose where your data comes from</h1>
+
+    <div class="cards" id="remote-sources"></div>
+  </section>
+
+  <!-- Step 2 ------------------------------------------------------------ -->
+  <section class="panel" id="step2" hidden>
+    <h1 id="step2-title">Choose a dataset</h1>
+    <p class="lead" id="step2-lead"></p>
+
+    <label class="search" hidden id="search-wrap">
+      <input type="search" id="search" placeholder="Search datasets…"
+             autocomplete="off">
+    </label>
+
+    <div class="rows" id="datasets"></div>
+    <p class="empty" id="step2-empty" hidden></p>
+
+    <div class="nav">
+      <button class="ghost" data-back="1">Back</button>
+    </div>
+  </section>
+
+  <!-- Step 3 ------------------------------------------------------------ -->
+  <section class="panel" id="step3" hidden>
+    <h1>Choose what to import</h1>
+    <p class="lead" id="step3-lead"></p>
+    <div class="warning" id="dataset-notes" hidden></div>
+
+    <fieldset>
+      <legend>Variables</legend>
+      <div class="toolbar">
+        <input type="search" id="variable-filter" placeholder="Filter…"
+               autocomplete="off" hidden>
+        <span class="count" id="variable-count"></span>
+        <span class="spacer"></span>
+        <button type="button" class="link" id="select-all">Select all</button>
+        <button type="button" class="link" id="select-none">Clear</button>
+      </div>
+      <div class="checks" id="variables"></div>
+      <p class="hint" id="variables-hint">Choose at least one.</p>
+    </fieldset>
+
+    <fieldset id="g-date" hidden>
+      <legend>Date range</legend>
+      <p class="hint" id="date-available"></p>
+      <div class="fields">
+        <label>Start<input type="date" id="date-start"></label>
+        <label>End<input type="date" id="date-end"></label>
+      </div>
+    </fieldset>
+
+    <fieldset id="g-depth" hidden>
+      <legend>Depth</legend>
+      <p class="hint" id="depth-available"></p>
+      <div class="sliders">
+        <label>From
+          <span class="pair">
+            <input type="range" id="depth-min-slider">
+            <input type="number" id="depth-min" inputmode="decimal">
+          </span>
+        </label>
+        <label>To
+          <span class="pair">
+            <input type="range" id="depth-max-slider">
+            <input type="number" id="depth-max" inputmode="decimal">
+          </span>
+        </label>
+      </div>
+    </fieldset>
+
+    <fieldset id="g-area" hidden>
+      <legend>Area <span class="muted">— optional</span></legend>
+      <p class="hint" id="area-available"></p>
+      <div class="fields four">
+        <label>West<input type="number" id="area-west" inputmode="decimal"></label>
+        <label>East<input type="number" id="area-east" inputmode="decimal"></label>
+        <label>South<input type="number" id="area-south" inputmode="decimal"></label>
+        <label>North<input type="number" id="area-north" inputmode="decimal"></label>
+      </div>
+      <button type="button" class="link" id="area-full">Use the whole area</button>
+    </fieldset>
+
+    <p class="hint">Leave a range blank to import everything available.</p>
+
+    <div class="nav">
+      <button class="ghost" data-back="2">Back</button>
+      <button class="primary" id="to-review">Continue</button>
+    </div>
+  </section>
+
+  <!-- Step 4 ------------------------------------------------------------ -->
+  <section class="panel" id="step4" hidden>
+    <h1>Review</h1>
+    <dl class="summary" id="summary"></dl>
+    <p class="estimate" id="estimate" hidden></p>
+    <div class="nav">
+      <button class="ghost" data-back="3">Back</button>
+      <button class="primary" id="do-import">Import Data</button>
+    </div>
+  </section>
+
+  <!-- Progress ---------------------------------------------------------- -->
+  <section class="panel" id="progress-panel" hidden>
+    <h1>Importing data…</h1>
+    <ul class="progress" id="progress-list"></ul>
+    <div class="bar"><div class="fill" id="bar-fill"></div></div>
+    <p class="muted">Do not close this page.</p>
+  </section>
+
+  <!-- Result ------------------------------------------------------------ -->
+  <section class="panel" id="result-panel" hidden>
+    <div id="result"></div>
+    <div class="nav">
+      <button class="primary" id="restart">Import something else</button>
+    </div>
+  </section>
+
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -40,5 +40,14 @@ data/rejected/*
 !data/curated/.gitkeep
 !data/rejected/.gitkeep
 
+# Operator acquisitions and uploaded working files are runtime data. Their
+# directories are retained, while file bytes and provenance remain local.
+data/acquired/*
+!data/acquired/.gitkeep
+var/ingestion/
+
 # Not ignored on purpose: docs, lockfiles, source, sample data under
 # data/raw/, and reproducible build configuration.
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
