@@ -46,17 +46,31 @@ at `ingestion/`.
   unselected. The LLD records what was chosen and why.
 - Sample data spans two NetCDF generations, four QC vocabularies and two
   vertical coordinate conventions on purpose. Parsers must handle the variety.
+- S2 reaches every source through `SourcePort` and hands off through
+  `StoragePort`. Adding a source means an adapter plus one entry in
+  `ingestion/adapters/__init__.py`; the application service must stay free of
+  provider conditionals and file-format branching.
+- Local file sources are archived in `archive/local-sources/`, not deleted.
+  Read its README before reinstating or duplicating them.
+- Where this repository departs from the SRS, HLSA, LLD or the technical
+  investigation, the departure is recorded in
+  `ingestion/docs/conflicts-with-earlier-documents.md`. Add to it rather than
+  editing those documents.
 
 ## Validation
 
 S2 ingestion validation:
 
 ```bash
+.venv/bin/pip install -r ingestion/requirements.txt
 .venv/bin/python -m pytest ingestion/tests -q
 .venv/bin/python -m compileall -q ingestion
-.venv/bin/python -m ingestion.cli --list
-.venv/bin/python -m ingestion.ui
+.venv/bin/python -m uvicorn ingestion.web:app --port 8000
 ```
+
+The tests need no network: the workflow is exercised through a stand-in
+source in `ingestion/tests/fakes.py`. Running the application does reach
+INCOIS.
 
 ## Context graph (Graft)
 
