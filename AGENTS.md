@@ -55,10 +55,13 @@ what is not, and which document currently governs what.
   provider conditionals and file-format branching.
 - Local file sources are archived in `archive/local-sources/`, not deleted.
   Read its README before reinstating or duplicating them.
-- Where this repository departs from the SRS, HLSA, LLD or the technical
-  investigation, the departure is recorded in
-  `ingestion/docs/conflicts-with-earlier-documents.md`. Add to it rather than
-  editing those documents.
+- Where this repository departs from a design document, record it in the
+  Decision record, not by editing the document to match:
+  <https://linear.app/rudrav1/document/decision-record-d65cd64aa414>
+- Documents have one home each. Requirements, architecture and decisions live
+  in Linear; `AGENTS.md`, `docs/STATUS.md`, `ingestion/README.md` and the code
+  live here. See the Document map:
+  <https://linear.app/rudrav1/document/document-map-97246882b585>
 
 ## Validation
 

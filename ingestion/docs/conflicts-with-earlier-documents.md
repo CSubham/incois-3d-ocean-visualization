@@ -1,3 +1,10 @@
+> **The home for this record is now Linear:**
+> <https://linear.app/rudrav1/document/decision-record-d65cd64aa414>
+>
+> Add entries there, not here. This copy is retained until the repository is
+> pushed, then it becomes a pointer. **One source:** if this file and Linear
+> disagree, Linear is right.
+
 # Conflicts with earlier documents
 
 Recorded during the S2 rebuild. The current instruction was followed in every
