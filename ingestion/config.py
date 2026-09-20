@@ -58,14 +58,31 @@ INCOIS_ERDDAP = ErddapServer(
     # These four are depth-resolved temperature and salinity analyses, which
     # is the three-dimensional ocean state this system exists to show.
     datasets=("incois_argo_10d_VAM", "incois_argo_10day_McCreary",
-              "incois_argo_mnt_VAM", "incois_argo_mnt_McCreary"),
+              "incois_argo_mnt_VAM", "incois_argo_mnt_McCreary",
+              # The observation holding: Argo float profiles, served as rows.
+              "Indian_ARGO_Floats"),
     max_values_per_request=int(
         os.environ.get("INCOIS_MAX_REQUEST_VALUES", "2000000")),
     extra_ca_bundle=Path(__file__).parent / "certs"
                     / "globalsign_rsa_ov_ssl_ca_2018.pem",
 )
 
-ERDDAP_SERVERS: tuple[ErddapServer, ...] = (INCOIS_ERDDAP,)
+#: Underwater gliders, for DIR-004 and DIR-005. The DAC publishes 999
+#: deployments, nearly all of them off the United States. Curated to the ru29
+#: missions, which crossed the Indian Ocean and the Bay of Bengal -- the water
+#: this system is about, and the deployment the repository already sampled.
+IOOS_GLIDERS = ErddapServer(
+    source_id="ioos_gliders",
+    name="IOOS Glider DAC",
+    base_url=os.environ.get("IOOS_GLIDER_URL",
+                            "https://gliders.ioos.us/erddap"),
+    description="Underwater glider deployments. Depth-resolved profiles "
+                "along a track.",
+    datasets=("ru29-20180812T0220", "ru29-20190906T1535",
+              "ru29-20221116T1326", "ru29-20240419T1430"),
+)
+
+ERDDAP_SERVERS: tuple[ErddapServer, ...] = (INCOIS_ERDDAP, IOOS_GLIDERS)
 
 
 # -- Model sources over OPeNDAP / THREDDS -----------------------------------

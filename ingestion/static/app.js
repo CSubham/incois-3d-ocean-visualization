@@ -45,6 +45,14 @@ function el(tag, className, html) {
   return node;
 }
 
+/* Waiting on someone else's server. Say so, and say what for. */
+function showLoading(hostId, message) {
+  $(hostId).innerHTML =
+    `<div class="loading"><span class="spinner"></span>${esc(message)}</div>` +
+    `<div class="skeleton"><div class="bar"></div><div class="bar"></div>` +
+    `<div class="bar"></div></div>`;
+}
+
 function showStep(id, stepNumber) {
   for (const panel of PANELS) $(panel).hidden = panel !== id;
   state.step = stepNumber;
@@ -89,7 +97,15 @@ function prettyDate(value) {
 /* -- step 1: source ------------------------------------------------------ */
 
 async function loadSources() {
-  const { sources } = await api("/api/sources");
+  showLoading("remote-sources", "Loading sources…");
+  let sources;
+  try {
+    ({ sources } = await api("/api/sources"));
+  } catch (error) {
+    $("remote-sources").innerHTML =
+      `<p class="empty">Could not load sources: ${esc(error.message)}</p>`;
+    return;
+  }
   const host = $("remote-sources");
   host.innerHTML = "";
 
@@ -124,8 +140,10 @@ async function chooseSource(source) {
 
 async function loadDatasets() {
   const host = $("datasets");
-  host.innerHTML = "";
   $("step2-empty").hidden = true;
+  $("search-wrap").hidden = true;
+  showLoading("datasets",
+              `Reading the catalogue from ${state.source.name}…`);
 
   let found = [];
   try {
@@ -178,8 +196,8 @@ async function chooseDataset(item) {
   state.dataset = item;
   state.selection = null;
   showStep("step3", 3);
-  $("step3-lead").textContent = `Reading ${item.name}…`;
-  $("variables").innerHTML = "";
+  $("step3-lead").textContent = item.name;
+  showLoading("variables", "Reading what this dataset offers…");
   $("dataset-notes").hidden = true;
   for (const id of ["g-date", "g-depth", "g-area"]) $(id).hidden = true;
 

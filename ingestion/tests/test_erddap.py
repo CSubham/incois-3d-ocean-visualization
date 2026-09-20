@@ -163,9 +163,11 @@ def test_the_catalogue_is_read_from_what_the_server_publishes():
     # rather than whichever datasets this deployment happens to curate.
     adapter = ErddapAdapter(replace(INCOIS_ERDDAP, datasets=()))
     adapter._catalogue_cache = [
-        {"dataset_id": "grid_one", "title": "Zulu", "summary": "s",
+        {"dataset_id": "grid_one", "protocol": "griddap",
+         "title": "Zulu", "summary": "s",
          "institution": "i"},
-        {"dataset_id": "grid_two", "title": "Alpha", "summary": "s",
+        {"dataset_id": "grid_two", "protocol": "griddap",
+         "title": "Alpha", "summary": "s",
          "institution": "i"},
     ]
     found = adapter.list_datasets()
@@ -178,9 +180,11 @@ def test_an_allow_list_narrows_what_is_offered():
     from dataclasses import replace
     adapter = ErddapAdapter(replace(INCOIS_ERDDAP, datasets=("grid_two",)))
     adapter._catalogue_cache = [
-        {"dataset_id": "grid_one", "title": "Zulu", "summary": "",
+        {"dataset_id": "grid_one", "protocol": "griddap",
+         "title": "Zulu", "summary": "",
          "institution": ""},
-        {"dataset_id": "grid_two", "title": "Alpha", "summary": "",
+        {"dataset_id": "grid_two", "protocol": "griddap",
+         "title": "Alpha", "summary": "",
          "institution": ""},
     ]
     assert [ref.dataset_id for ref in adapter.list_datasets()] == ["grid_two"]
@@ -192,8 +196,12 @@ def test_an_empty_allow_list_means_everything_the_server_offers():
 
     adapter = ErddapAdapter(replace(INCOIS_ERDDAP, datasets=()))
     adapter._catalogue_cache = [
-        {"dataset_id": "one", "title": "One", "summary": "", "institution": ""},
-        {"dataset_id": "two", "title": "Two", "summary": "", "institution": ""},
+        {"dataset_id": "one", "protocol": "griddap",
+         "title": "One", "summary": "",
+         "institution": ""},
+        {"dataset_id": "two", "protocol": "griddap",
+         "title": "Two", "summary": "",
+         "institution": ""},
     ]
     assert len(adapter.list_datasets()) == 2
 

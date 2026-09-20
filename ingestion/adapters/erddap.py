@@ -30,6 +30,8 @@ import xarray as xr
 from ingestion.config import DOWNLOAD_ROOT, ErddapServer
 from ingestion.domain.errors import SelectionError, SourceError
 from ingestion.domain.selection import ImportSelection
+from ingestion.tools import delimited
+from ingestion.tools.delimited import is_ancillary, role_of
 from ingestion.ports import (
     DatasetMetadata, DatasetRef, FetchResult, RangeInfo, SourceCapabilities,
     SourceDescription, SourcePort, VariableInfo,
@@ -120,8 +122,31 @@ class ErddapAdapter(SourcePort):
             f"{self.server.name} could not be reached after "
             f"{RETRY_ATTEMPTS} attempts: {last}") from last
 
-    def _url(self, dataset_id: str, suffix: str = "") -> str:
-        return f"{self.server.base_url}/griddap/{dataset_id}{suffix}"
+    def _table_columns(self, dataset_id: str) -> list[str]:
+        """Every column a tabledap dataset publishes."""
+        return [str(row[1]) for row in self._info_rows(dataset_id)
+                if row[0] == "variable"]
+
+    def _column_units(self, dataset_id: str) -> dict[str, str]:
+        """What each column measures in, as the catalogue records it."""
+        units: dict[str, str] = {}
+        for row in self._info_rows(dataset_id):
+            if row[0] == "attribute" and row[1] != "NC_GLOBAL" \
+                    and str(row[2]) == "units":
+                units[str(row[1])] = str(row[4])
+        return units
+
+    def _protocol_of(self, dataset_id: str) -> str:
+        """How this dataset is served. Decided by the catalogue, not guessed."""
+        for entry in self._catalogue():
+            if entry["dataset_id"] == dataset_id:
+                return entry["protocol"]
+        raise SourceError(f"{dataset_id!r} is not offered by "
+                          f"{self.server.name}")
+
+    def _url(self, dataset_id: str, suffix: str = "",
+             protocol: str = "griddap") -> str:
+        return f"{self.server.base_url}/{protocol}/{dataset_id}{suffix}"
 
     # -- discovery ----------------------------------------------------------
 
@@ -138,7 +163,8 @@ class ErddapAdapter(SourcePort):
                        # Where a dataset says nothing useful about itself,
                        # naming who publishes it beats naming nothing.
                        description=entry["summary"] or entry["institution"],
-                       details={"institution": entry["institution"]})
+                       details={"institution": entry["institution"],
+                                "protocol": entry["protocol"]})
             for entry in self._catalogue()
             if not allowed or entry["dataset_id"] in allowed
         ]
@@ -168,6 +194,7 @@ class ErddapAdapter(SourcePort):
             return None
 
         grid = index_of("griddap")
+        table = index_of("tabledap")
         identifier = index_of("Dataset ID", "datasetID")
         title = index_of("Title", "title")
         summary = index_of("Summary", "summary")
@@ -179,14 +206,23 @@ class ErddapAdapter(SourcePort):
 
         found: list[dict[str, str]] = []
         for row in rows:
-            # Only gridded datasets: this adapter retrieves through griddap,
-            # so anything else would be listed and then fail on selection.
-            if grid is not None and not row[grid]:
+            # A server may publish the same holding both ways. griddap is
+            # preferred where offered: it returns arrays directly, where
+            # tabledap returns rows that must be rebuilt into one.
+            protocol = ""
+            if grid is not None and row[grid]:
+                protocol = "griddap"
+            elif table is not None and row[table]:
+                protocol = "tabledap"
+            if not protocol:
                 continue
             dataset_id = str(row[identifier])
+            if dataset_id == "allDatasets":
+                continue        # ERDDAP's own index of itself
             heading = str(row[title]) if title is not None else dataset_id
             found.append({
                 "dataset_id": dataset_id,
+                "protocol": protocol,
                 "title": heading,
                 "summary": _readable_summary(
                     str(row[summary]) if summary is not None else "", heading),
@@ -265,7 +301,8 @@ class ErddapAdapter(SourcePort):
         ranges: list[RangeInfo] = []
         for axis in axes:
             detail = described.get(axis, {})
-            role = _ROLE_BY_NAME.get(axis.lower(), axis.lower())
+            role = role_of(axis) or _ROLE_BY_NAME.get(axis.lower(),
+                                                       axis.lower())
             units = detail.get("units")
             extent = detail.get("actual_range")
             low = high = None
@@ -294,6 +331,7 @@ class ErddapAdapter(SourcePort):
         if allowed and dataset_id not in allowed:
             raise SourceError(f"{dataset_id!r} is not offered by "
                               f"{self.server.name}")
+        protocol = self._protocol_of(dataset_id)
         rows = self._info_rows(dataset_id)
         axes = [str(row[1]) for row in rows if row[0] == "dimension"]
 
@@ -318,6 +356,26 @@ class ErddapAdapter(SourcePort):
             for row in rows
             if row[0] == "variable" and str(row[1]) not in axes)
 
+        if protocol == "tabledap":
+            # No dimensions to read: a table's extent lives on the columns
+            # that carry a scientific role. One column per role, and never a
+            # flag or an adjusted copy -- a table names its position and
+            # depth once, then qualifies them repeatedly.
+            axes = []
+            claimed: set[str] = set()
+            for row in rows:
+                if row[0] != "variable":
+                    continue
+                name = str(row[1])
+                if is_ancillary(name):
+                    continue
+                role = role_of(name)
+                if role and role not in claimed:
+                    claimed.add(role)
+                    axes.append(name)
+            variables = tuple(v for v in variables
+                              if not role_of(v.name) and not is_ancillary(v.name))
+
         return DatasetMetadata(
             dataset_id=dataset_id,
             name=globals_.get("title", dataset_id),
@@ -330,6 +388,107 @@ class ErddapAdapter(SourcePort):
 
     def fetch(self, selection: ImportSelection,
               context: Optional[dict[str, Any]] = None) -> FetchResult:
+        """Retrieve, by whichever protocol the catalogue says this is.
+
+        The choice is internal. Nothing above this adapter learns that a
+        server serves some holdings as arrays and others as rows.
+        """
+        if self._protocol_of(selection.dataset_id) == "tabledap":
+            return self._fetch_rows(selection)
+        return self._fetch_grid(selection)
+
+    # -- rows, from tabledap ------------------------------------------------
+
+    def _fetch_rows(self, selection: ImportSelection) -> FetchResult:
+        dataset_id = selection.dataset_id
+        metadata = self.inspect_dataset(dataset_id)
+        available = {v.name for v in metadata.variables}
+        chosen = list(dict.fromkeys(selection.variables)) or sorted(available)
+        unknown = set(chosen) - available
+        if unknown:
+            raise SelectionError("this dataset has no variable(s) named "
+                                 + ", ".join(sorted(unknown)))
+
+        axes = {info.role: info.dimension for info in metadata.ranges}
+        # Position, time and depth come back whatever was asked for: without
+        # them a measurement cannot be placed, and validation would reject it.
+        columns = [axes[role] for role in
+                   ("time", "latitude", "longitude", "vertical")
+                   if role in axes]
+
+        published = self._table_columns(dataset_id)
+
+        # Platform and cycle identifiers come back too. Without them a set of
+        # rows cannot be grouped into casts, and the same float measured over
+        # days reads as a single path through the water rather than as the
+        # profiles it is. Selecting one float later (IDO-002) needs them.
+        columns += [name for name in published
+                    if is_ancillary(name) and not _is_flag(name)
+                    and name not in columns]
+
+        columns += [name for name in chosen if name not in columns]
+
+        # Quality flags for what was chosen: which measurements to trust is
+        # not a detail to discard on the way in.
+        columns += [f"{name}_QC" for name in chosen
+                    if f"{name}_QC" in published and f"{name}_QC" not in columns]
+
+        constraints: list[str] = []
+
+        def bound(role: str, low: Any, high: Any) -> None:
+            column = axes.get(role)
+            if column is None:
+                return
+            constraints.append(f"&{column}>={low}")
+            constraints.append(f"&{column}<={high}")
+
+        if selection.time:
+            bound("time", selection.time.start, selection.time.end)
+        if selection.depth:
+            bound("vertical", selection.depth.minimum, selection.depth.maximum)
+        if selection.area:
+            bound("latitude", selection.area.south, selection.area.north)
+            bound("longitude", selection.area.west, selection.area.east)
+
+        # A table has no shape to measure before asking, so the guard becomes
+        # a row limit rather than a refusal.
+        limit = max(1, self.server.max_values_per_request // max(len(columns), 1))
+        query = (",".join(columns) + "".join(constraints)
+                 + f'&orderByLimit("{limit}")')
+        url = f"{self._url(dataset_id, '.csv', 'tabledap')}?" + quote(
+            query, safe=",&:")
+
+        try:
+            text = self._get(url, timeout=self.server.timeout_seconds).decode()
+        except SourceError as exc:
+            # ERDDAP answers an empty selection with a refusal, not an empty
+            # table, so say what actually happened.
+            if "refused" in str(exc):
+                raise SelectionError(
+                    "no observations match that selection") from exc
+            raise
+
+        # The catalogue already said what each column measures in, so the
+        # file is not asked to describe itself.
+        declared = {name: units for name, units in
+                    self._column_units(dataset_id).items() if units}
+        dataset = delimited.read(text, units=declared)
+        rows = int(dataset.sizes.get(delimited.OBSERVATION_DIM, 0))
+        if rows == 0:
+            raise SelectionError("no observations match that selection")
+
+        return FetchResult(
+            dataset=dataset,
+            location=url,
+            details={"provider": self.server.name, "dataset_id": dataset_id,
+                     "request_url": url, "rows": rows, "row_limit": limit,
+                     "truncated": rows >= limit,
+                     "protocol": "tabledap"},
+        )
+
+    # -- arrays, from griddap -----------------------------------------------
+
+    def _fetch_grid(self, selection: ImportSelection) -> FetchResult:
         dataset_id = selection.dataset_id
         metadata = self.inspect_dataset(dataset_id)
         available = {v.name for v in metadata.variables}
@@ -403,6 +562,13 @@ class ErddapAdapter(SourcePort):
                 raise
 
         return self._with_retry(attempt)
+
+
+def _is_flag(name: str) -> bool:
+    """A quality flag, as opposed to an identifier."""
+    lowered = name.lower()
+    return any(marker in lowered
+               for marker in ("_qc", "_flag", "qartod", "_quality"))
 
 
 #: ERDDAP appends machine-readable metadata to its summaries. Everything from
