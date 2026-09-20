@@ -58,4 +58,17 @@ INCOIS_ERDDAP = ErddapServer(
                     / "globalsign_rsa_ov_ssl_ca_2018.pem",
 )
 
-ERDDAP_SERVERS: tuple[ErddapServer, ...] = (INCOIS_ERDDAP,)
+#: Global products, for coverage the regional INCOIS holdings cannot give:
+#: longitudes expressed -180 to 180, the antimeridian, and high latitudes.
+#:
+#: NOAA CoastWatch was the first candidate and is unreachable from here --
+#: "no route to host" at the network level, not a fault in this code.
+IFREMER = ErddapServer(
+    source_id="ifremer_erddap",
+    name="Ifremer",
+    base_url=os.environ.get("IFREMER_ERDDAP_URL",
+                            "https://erddap.ifremer.fr/erddap"),
+    description="French national ocean data centre. Global products.",
+)
+
+ERDDAP_SERVERS: tuple[ErddapServer, ...] = (INCOIS_ERDDAP, IFREMER)

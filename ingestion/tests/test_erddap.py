@@ -40,6 +40,26 @@ def test_an_inverted_range_is_refused():
         _clamp(DEPTH, _selection(depth=DepthRange(500, 10)))
 
 
+def test_an_area_crossing_the_antimeridian_is_named_as_such():
+    """A west east of its east is a dateline request, not a typo.
+
+    Global datasets express longitude -180 to 180, so this is reachable
+    there and unreachable in the regional INCOIS holdings.
+    """
+    global_lon = RangeInfo(dimension="longitude", role="longitude",
+                           minimum=-180.0, maximum=179.75,
+                           units="degrees_east", count=1440)
+    selection = _selection(area=Area(west=170, east=-170, south=-10, north=10))
+    with pytest.raises(SelectionError, match="antimeridian"):
+        _clamp(global_lon, selection)
+
+
+def test_a_genuinely_inverted_range_still_says_so():
+    """Outside the wrap case, an inverted range is just inverted."""
+    with pytest.raises(SelectionError, match="must not exceed"):
+        _clamp(DEPTH, _selection(depth=DepthRange(500, 10)))
+
+
 def test_a_range_outside_the_data_is_refused():
     with pytest.raises(SelectionError, match="must fall within"):
         _clamp(DEPTH, _selection(depth=DepthRange(5000, 6000)))

@@ -478,6 +478,16 @@ def _clamp(info: RangeInfo, selection: ImportSelection) -> tuple[str, str]:
     except (TypeError, ValueError) as exc:
         raise SelectionError(f"{info.dimension} bounds must be numbers") from exc
     if low > high:
+        # A west greater than its east, both inside the axis, is not a mistake
+        # -- it is an area crossing the antimeridian. Saying "minimum exceeds
+        # maximum" blames the user for asking something reasonable.
+        if (info.role == "longitude"
+                and float(info.minimum) <= high
+                and low <= float(info.maximum)):
+            raise SelectionError(
+                "an area crossing the antimeridian is not supported. Request "
+                f"it as two areas: {low} to {info.maximum}, and "
+                f"{info.minimum} to {high}.")
         raise SelectionError(
             f"{info.dimension} minimum must not exceed its maximum")
     if high < float(info.minimum) or low > float(info.maximum):
