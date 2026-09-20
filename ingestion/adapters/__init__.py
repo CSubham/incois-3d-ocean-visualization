@@ -12,9 +12,10 @@ from __future__ import annotations
 
 from typing import Callable
 
-from ingestion.config import ERDDAP_SERVERS
+from ingestion.config import ERDDAP_SERVERS, OPENDAP_SERVERS
 from ingestion.domain.errors import SourceError
 from ingestion.adapters.erddap import ErddapAdapter
+from ingestion.adapters.opendap import OpendapAdapter
 from ingestion.ports import SourceDescription, SourcePort
 
 #: Source id -> how to build the adapter for it.
@@ -23,6 +24,10 @@ _BUILDERS: dict[str, Callable[[], SourcePort]] = {}
 for _server in ERDDAP_SERVERS:
     _BUILDERS[_server.source_id] = (
         lambda server=_server: ErddapAdapter(server))
+
+for _server in OPENDAP_SERVERS:
+    _BUILDERS[_server.source_id] = (
+        lambda server=_server: OpendapAdapter(server))
 
 
 def resolve(source_id: str) -> SourcePort:

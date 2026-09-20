@@ -157,7 +157,11 @@ def test_cf_times_are_rendered_as_readable_instants():
 
 def test_the_catalogue_is_read_from_what_the_server_publishes():
     """Datasets are discovered, not recited from configuration."""
-    adapter = ErddapAdapter(INCOIS_ERDDAP)
+    from dataclasses import replace
+
+    # A server with no allow-list, so discovery itself is what is tested
+    # rather than whichever datasets this deployment happens to curate.
+    adapter = ErddapAdapter(replace(INCOIS_ERDDAP, datasets=()))
     adapter._catalogue_cache = [
         {"dataset_id": "grid_one", "title": "Zulu", "summary": "s",
          "institution": "i"},
@@ -182,8 +186,23 @@ def test_an_allow_list_narrows_what_is_offered():
     assert [ref.dataset_id for ref in adapter.list_datasets()] == ["grid_two"]
 
 
-def test_no_allow_list_means_everything_the_server_offers():
-    assert INCOIS_ERDDAP.datasets == ()
+def test_an_empty_allow_list_means_everything_the_server_offers():
+    """The allow-list narrows a catalogue; an empty one narrows nothing."""
+    from dataclasses import replace
+
+    adapter = ErddapAdapter(replace(INCOIS_ERDDAP, datasets=()))
+    adapter._catalogue_cache = [
+        {"dataset_id": "one", "title": "One", "summary": "", "institution": ""},
+        {"dataset_id": "two", "title": "Two", "summary": "", "institution": ""},
+    ]
+    assert len(adapter.list_datasets()) == 2
+
+
+def test_incois_is_curated_to_depth_resolved_products():
+    """Most of the INCOIS catalogue is two-dimensional satellite surface
+    data, which is outside DIR-001 to DIR-003."""
+    assert INCOIS_ERDDAP.datasets, "an empty allow-list offers the lot"
+    assert all("argo" in name.lower() for name in INCOIS_ERDDAP.datasets)
 
 
 def test_the_adapter_declares_what_it_can_narrow():

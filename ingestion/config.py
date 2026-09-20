@@ -52,23 +52,70 @@ INCOIS_ERDDAP = ErddapServer(
     base_url=os.environ.get("INCOIS_ERDDAP_URL",
                             "https://erddap.incois.gov.in/erddap"),
     description="Indian National Centre for Ocean Information Services.",
+    # Curated, not the whole catalogue. INCOIS publishes 15 gridded datasets;
+    # most are satellite surface products -- SST, scatterometer winds,
+    # Oceansat -- which are two-dimensional and outside DIR-001 to DIR-003.
+    # These four are depth-resolved temperature and salinity analyses, which
+    # is the three-dimensional ocean state this system exists to show.
+    datasets=("incois_argo_10d_VAM", "incois_argo_10day_McCreary",
+              "incois_argo_mnt_VAM", "incois_argo_mnt_McCreary"),
     max_values_per_request=int(
         os.environ.get("INCOIS_MAX_REQUEST_VALUES", "2000000")),
     extra_ca_bundle=Path(__file__).parent / "certs"
                     / "globalsign_rsa_ov_ssl_ca_2018.pem",
 )
 
-#: Global products, for coverage the regional INCOIS holdings cannot give:
-#: longitudes expressed -180 to 180, the antimeridian, and high latitudes.
-#:
-#: NOAA CoastWatch was the first candidate and is unreachable from here --
-#: "no route to host" at the network level, not a fault in this code.
-IFREMER = ErddapServer(
-    source_id="ifremer_erddap",
-    name="Ifremer",
-    base_url=os.environ.get("IFREMER_ERDDAP_URL",
-                            "https://erddap.ifremer.fr/erddap"),
-    description="French national ocean data centre. Global products.",
+ERDDAP_SERVERS: tuple[ErddapServer, ...] = (INCOIS_ERDDAP,)
+
+
+# -- Model sources over OPeNDAP / THREDDS -----------------------------------
+
+@dataclass(frozen=True)
+class OpendapDataset:
+    """One dataset reachable at an OPeNDAP endpoint.
+
+    Named explicitly rather than discovered. A THREDDS catalogue lists
+    everything a centre publishes; this system wants the few products that
+    answer the problem statement.
+    """
+
+    dataset_id: str
+    name: str
+    url: str
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class OpendapServer:
+    """A provider reached over OPeNDAP."""
+
+    source_id: str
+    name: str
+    datasets: tuple[OpendapDataset, ...]
+    description: str = ""
+    #: Guards against a selection that would pull an unreasonable volume.
+    #: OPeNDAP subsets lazily, so the guard is what keeps a careless request
+    #: from asking for the whole globe at every depth and time.
+    max_values_per_request: int = 2_000_000
+
+
+HYCOM = OpendapServer(
+    source_id="hycom_opendap",
+    name="HYCOM",
+    description="Global ocean model output from the HYCOM consortium.",
+    datasets=(
+        OpendapDataset(
+            dataset_id="GLBy0.08_expt_93.0",
+            name="HYCOM GLBy0.08 global analysis",
+            url=os.environ.get(
+                "HYCOM_URL",
+                "https://tds.hycom.org/thredds/dodsC/GLBy0.08/expt_93.0"),
+            description="Temperature, salinity and current vectors on 40 "
+                        "depth levels, 1/12 degree global.",
+        ),
+    ),
+    max_values_per_request=int(
+        os.environ.get("HYCOM_MAX_REQUEST_VALUES", "2000000")),
 )
 
-ERDDAP_SERVERS: tuple[ErddapServer, ...] = (INCOIS_ERDDAP, IFREMER)
+OPENDAP_SERVERS: tuple[OpendapServer, ...] = (HYCOM,)
