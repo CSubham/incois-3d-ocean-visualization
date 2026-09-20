@@ -331,8 +331,13 @@ def _decode_times(dataset: xr.Dataset) -> xr.Dataset:
         (origin + timedelta(seconds=float(v) * scale)).replace(tzinfo=None), "ns")
         for v in np.atleast_1d(dataset["time"].values)]
     decoded = dataset.assign_coords(time=np.array(stamps, dtype="datetime64[ns]"))
-    attrs.pop("units", None)
+    # `units` and `calendar` described the numbering that has just been
+    # decoded away. Left on the variable they collide with the encoding a
+    # writer sets for a real datetime, and the dataset cannot be saved.
+    for key in ("units", "calendar", "_FillValue", "missing_value"):
+        attrs.pop(key, None)
     decoded["time"].attrs = attrs
+    decoded["time"].encoding = {}
     return decoded
 
 

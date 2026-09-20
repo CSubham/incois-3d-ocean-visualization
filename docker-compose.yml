@@ -1,0 +1,30 @@
+# The catalogue. Postgres with PostGIS, because observation positions are
+# searched spatially -- "which floats are near this model field" is the
+# question the visualization asks, and it should not require opening arrays.
+#
+#   docker compose up -d
+#   psql "$INGESTION_CATALOGUE_DSN" -f ingestion/storage/schema.sql
+#
+# Port 5433, not 5432, so it cannot collide with a Postgres already running.
+
+services:
+  catalogue:
+    image: postgis/postgis:16-3.4
+    container_name: incois-postgis
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: incois
+      POSTGRES_PASSWORD: incois
+      POSTGRES_DB: incois
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - incois-postgis-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U incois"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  incois-postgis-data:

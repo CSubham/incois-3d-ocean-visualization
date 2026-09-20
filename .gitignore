@@ -51,3 +51,6 @@ var/ingestion/
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Stored scientific arrays. The catalogue records them; they are not source.
+data/store/

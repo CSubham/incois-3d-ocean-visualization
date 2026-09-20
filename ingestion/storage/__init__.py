@@ -1,10 +1,17 @@
 """Implementations of the storage port.
 
-The real storage layer (S3) does not exist yet. What lives here is enough to
-prove the handoff happens and to let the stage run end to end -- nothing here
-is, or pretends to be, durable scientific storage.
+`PostgresStorage` is the real one: arrays to an object store, catalogue and
+observation positions to PostgreSQL with PostGIS.
+
+The sinks remain for tests and for running without a database.
 """
 
+from ingestion.storage.objects import (
+    LocalObjectStore, ObjectStore, ObjectStoreError,
+)
+from ingestion.storage.postgres import PostgresStorage, StorageError
 from ingestion.storage.sink import DevelopmentSink, RecordingSink
 
-__all__ = ["DevelopmentSink", "RecordingSink"]
+__all__ = ["PostgresStorage", "StorageError", "ObjectStore",
+           "LocalObjectStore", "ObjectStoreError", "DevelopmentSink",
+           "RecordingSink"]

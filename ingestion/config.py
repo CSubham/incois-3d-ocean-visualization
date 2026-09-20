@@ -19,6 +19,20 @@ def _path(name: str, default: Path) -> Path:
     return Path(raw).expanduser().resolve() if raw else default
 
 
+# -- Storage (S3) -----------------------------------------------------------
+
+#: Where scientific arrays are written. Local files in development; an
+#: object-storage backend replaces the store class and nothing else.
+OBJECT_STORE_ROOT: Path = _path("INGESTION_OBJECT_STORE",
+                                REPO_ROOT / "data" / "store")
+
+#: The catalogue. PostgreSQL with PostGIS, so observation positions can be
+#: searched spatially rather than by opening every stored array.
+CATALOGUE_DSN: str = os.environ.get(
+    "INGESTION_CATALOGUE_DSN",
+    "postgresql://incois:incois@127.0.0.1:5433/incois")
+
+
 # -- Where retrieved data is written ---------------------------------------
 
 DOWNLOAD_ROOT: Path = _path("INGESTION_DOWNLOAD_ROOT",

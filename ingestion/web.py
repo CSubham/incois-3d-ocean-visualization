@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
-from ingestion.config import DOWNLOAD_ROOT
+from ingestion.config import CATALOGUE_DSN, OBJECT_STORE_ROOT
 from ingestion.domain.errors import (
     IngestionError, SelectionError, SourceError,
 )
@@ -23,12 +23,13 @@ from ingestion.domain.selection import (
     Area, DepthRange, ImportSelection, TimeRange,
 )
 from ingestion.service import IngestionService
-from ingestion.storage import DevelopmentSink
+from ingestion.storage import LocalObjectStore, PostgresStorage
 
 STATIC = Path(__file__).parent / "static"
 
 app = FastAPI(title="Ocean data import", version="2.0")
-service = IngestionService(storage=DevelopmentSink(DOWNLOAD_ROOT / "_handoff"))
+service = IngestionService(
+    storage=PostgresStorage(CATALOGUE_DSN, LocalObjectStore(OBJECT_STORE_ROOT)))
 
 
 @app.middleware("http")
