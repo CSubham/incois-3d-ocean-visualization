@@ -1,149 +1,107 @@
 # Where the project stands
 
-One page. If it disagrees with anything else in the repository, trust the
-code and fix this.
+One page. If it disagrees with the code, the code is right and this needs fixing.
 
-Last updated: 19 September 2026, commit `a75495d`.
+Commit `1deae5f`, 20 September 2026.
 
 ---
 
 ## The seven stages
 
-```mermaid
-flowchart LR
-    S1[S1 Sources] --> S2[S2 Ingestion] --> S3[S3 Storage] --> S4[S4 Processing]
-    S4 --> S5[S5 Backend] --> S6[S6 Rendering] --> S7[S7 Interface]
-    classDef built fill:#e8f3ec,stroke:#14532d,color:#14532d;
-    classDef none fill:#f4f4f4,stroke:#9a9a9a,color:#6a6a6a;
-    class S2 built;
-    class S1,S3,S4,S5,S6,S7 none;
-```
-
 | Stage | State | Where |
 |---|---|---|
 | S1 Sources | External. Not ours to build. | — |
-| **S2 Ingestion** | **Built and tested.** | `ingestion/` |
-| S3 Storage | **Not started.** S2 hands off to a development sink. | — |
+| **S2 Ingestion** | **Built.** 79 tests. Two sources. | `ingestion/` |
+| S3 Storage | **Next.** Nothing persists today. | — |
 | S4 Processing | Not started | — |
 | S5 Backend | Not started | — |
 | S6 Rendering | Not started | — |
-| S7 Interface | Not started. S2 has its own operator UI; that is not S7. | — |
+| S7 Interface | Not started | — |
 
----
+S2 has its own operator interface for choosing what to import. **That is not S7.** S7 is the visualization.
 
-## What actually runs today
+## Chosen sequence
 
-```bash
-.venv/bin/python -m uvicorn ingestion.web:app --port 8000
-```
+Deadline-driven: **S3 storage, then a thin visualization path, then observations.**
 
-A four-step import workflow — source, dataset, variables, review — against
-INCOIS ERDDAP. It discovers the server's published catalogue (15 gridded
-datasets), subsets server-side, decodes, classifies the dataset's shape,
-validates it against nine convention checks, and hands a `CanonicalPackage`
-across `StoragePort`.
+The alternative was observations first, on the argument that S3 designed against gridded data alone will need rework when profiles arrive. That argument is sound and the risk is real — it is accepted deliberately, because a model-only visualization is demonstrable and observations with nothing to display them in are not.
 
-**Where that package goes:** a development sink that writes it to disk for
-inspection. Nothing reads it. Every import currently evaporates. This is the
-single largest gap.
+**What this costs:** `CanonicalPackage` models five geometries and only `grid` has travelled the full path. S3 will be designed against arrays, and the observation/profile side of it — PostGIS, profile records — will be added later rather than designed in. Budget for that.
 
 ---
 
 ## Requirement coverage
 
-Honest as of this commit. 39 requirement IDs exist in the SRS; these are the
-ones S2 touches.
+Honest. "Covered" means there is a working path with evidence, not that the code mentions it.
 
-| Requirement | State | Why |
-|---|---|---|
-| DIR-001, 002, 003 | **Covered** | Gridded model fields with depth, grid and time, from ERDDAP |
-| DIR-004 Argo / Glider observations | **NOT covered** | See below |
-| DIR-005 Argo, Glider, CTD, BGC | **NOT covered** | See below |
-| DIR-006 observation attributes | **NOT covered** | See below |
-| DIR-007 NetCDF *and* delimited text | **Half covered** | NetCDF yes, text no |
-| ING-001 NetCDF parsing | **Covered** | `adapters/erddap.py` + xarray |
-| ING-002 delimited-text parsing | **NOT covered** | See below |
-| STD-001 CF conventions | **Covered** | `conventions.py`, nine checks |
-| EXT-001 new sources with minimal change | **Covered** | Adapter + one registry line; proven in `tests/test_ports.py` |
+| ID | State | Evidence | Caveat |
+|---|---|---|---|
+| DIR-001 model outputs | **Covered** | HYCOM GLBy0.08 over OPeNDAP, `source: HYCOM archive file` | Only since the OPeNDAP adapter. The INCOIS products are objective analyses of observations, not model runs. |
+| DIR-002 T, S, currents, chlorophyll | **3 of 4** | `water_temp`, `salinity`, `water_u`, `water_v` | **No chlorophyll.** HYCOM is physical, not biogeochemical. Needs a BGC model or BGC-Argo — open decision 5. |
+| DIR-003 depths, grids, time steps | **Covered** | 40 levels to 5000 m; 4251 × 4500 global; 16,809 time steps | HYCOM spans 80°S–90°N, so the southernmost ~10° is absent. |
+| DIR-004 Argo & Glider | **Not covered** | — | No observation route at all. |
+| DIR-005 Argo, Glider, CTD, BGC | **Not covered** | — | Same. |
+| DIR-006 observation attributes | **Not covered** | — | Same. |
+| DIR-007 NetCDF and delimited text | **Half** | NetCDF via both adapters | Delimited-text parsing archived. |
+| ING-001 NetCDF parsing | **Covered** | `adapters/erddap.py`, `adapters/opendap.py`, xarray | |
+| ING-002 delimited-text parsing | **Not covered** | — | Archived with the local adapters. |
+| STD-001 CF Conventions | **Covered** | `conventions.py`, nine checks; CF `standard_name` used for discovery | Checks are structural. Full IOOS compliance checking is not run. |
+| EXT-001 new sources, minimal change | **Covered, with evidence** | Adding OPeNDAP — an entirely new protocol — changed only a new adapter, its registration and config. `ports.py`, `service.py`, `canonical.py`, `conventions.py` and `domain/package.py` were untouched. | |
 
-### The observation gap
+**39 requirement IDs exist. The 11 above are the ones S2 touches.** The rest belong to S4–S7 and are untouched by definition.
 
-The only live source is INCOIS ERDDAP, and the adapter retrieves through
-**griddap** — gridded model data only. The local file adapters that read
-Argo, Glider, CTD and BGC observations are archived in
-`archive/local-sources/`.
+### Not covered, counted honestly
 
-So the project currently has **no route to observation data of any kind**.
-That is five requirements, not one.
-
-Closing it means one of:
-
-1. Restore the local adapters (`archive/local-sources/README.md` has the steps).
-2. Write a **tabledap** adapter — ERDDAP serves observations that way, and it
-   reuses most of the existing ERDDAP code.
-3. Write the OPeNDAP/THREDDS adapter the technical investigation asks for.
+Five requirements have no path: DIR-004, DIR-005, DIR-006, ING-002, and half of DIR-007 — all observations and delimited text. Plus chlorophyll within DIR-002.
 
 ---
 
-## Which document governs what
+## Sources
 
-| Document | Authority | State |
-|---|---|---|
-| `docs/project/SRS_Technical_Requirements_Mapping.txt` | **Requirements. Locked.** | Authoritative |
-| `docs/architecture/HLSA_*.md` | Stage pipeline and ownership. Locked. | Authoritative |
-| `docs/architecture/LLD_*.md` | Technology selection | **Marked INCOMPLETE by its own header** |
-| `docs/history/*Technical_Investigation.md` | Research: repo shortlist, algorithms, topology | Reference, not binding |
-| `ingestion/README.md` | **What S2 actually is** | Current |
-| `ingestion/docs/conflicts-with-earlier-documents.md` | Where code departs from the documents, and why | Current — **9 entries** |
-| `ingestion/docs/S2_implementation_plan.md` | First design attempt | **Superseded.** Do not follow |
-| `AGENTS.md` | Shared rules for anyone working here | Current |
+| Source | Protocol | Offers | In scope because |
+|---|---|---|---|
+| **HYCOM** | OPeNDAP | 1 dataset — GLBy0.08 global analysis | Genuine model output: T, S, currents, 40 depth levels |
+| **INCOIS ERDDAP** | ERDDAP griddap | **4** of its 15 | The four depth-resolved T/S analyses |
 
-**The rule when they disagree:** current instruction beats document. Record
-the divergence in `conflicts-with-earlier-documents.md`; do not edit the
-locked documents to match the code.
+INCOIS's other 11 are two-dimensional satellite surface products — SST, scatterometer winds, Oceansat — outside DIR-001 to DIR-003. They are excluded by an allow-list in `config.py`, not hidden by accident.
 
 ---
 
-## Where things live
+## What is built properly, and what is not
 
-```
-docs/            SRS, HLSA, LLD, investigation, this page
-ingestion/       S2 — the only built stage
-  domain/        ImportSelection, CanonicalPackage, ValidationResult, ImportJob
-  ports.py       SourcePort, StoragePort — the two boundaries
-  service.py     the workflow; no source-specific logic
-  adapters/      erddap.py, and the table that resolves a source id
-  canonical.py   coordinate roles, geometry classification
-  conventions.py the nine checks
-  storage/       development sink (NOT storage)
-  web.py static/ HTTP layer and the operator UI
-  tests/         61 tests, none needing a network
-archive/         local file adapters, set aside with restoration notes
-data/raw/        sample data, committed
-data/acquired/   downloads, gitignored
-```
+**Properly built and proven**
+
+- The port boundary. A new protocol needed no change to the core — demonstrated, not asserted.
+- Geometry classification. Five shapes, CF `featureType` honoured, unclassifiable data reported rather than guessed.
+- Validation. Nine checks; a dataset without units is refused and never reaches storage.
+- Size guards. OPeNDAP retrieval is lazy, so a whole-globe request was refused at 2.9 trillion values with nothing transferred.
+- Coordinate conventions. 0–360 and −180–180 both handled; edge-crossing named rather than silently wrong.
+
+**Built, but thin**
+
+- **Storage handoff.** Proven architecturally — a complete package crosses `StoragePort` — against a development sink. Not persistence.
+- **Job lifecycle.** The model supports background execution; execution is synchronous and in-memory, so the app must run as one instance and progress cannot be live.
+- **The operator UI.** Functional, deliberately unpolished.
+
+**Not built**
+
+- Everything downstream of S2.
+- Any route to observation data.
+- Authentication — by decision, to be platform-level at deploy.
+- Deployment. Local only.
 
 ---
 
 ## Known limits
 
-- **S3 does not exist.** The handoff is proven architecturally, not as real
-  persistence.
-- **Single instance only.** The job store is in memory; a second replica
-  would 404 status polls.
-- **Imports run synchronously.** The lifecycle model supports background
-  execution; nothing uses it yet, so the progress view cannot show live
-  stages.
-- **No authentication.** Intended to be solved by platform auth at deploy,
-  not by code here.
-- **Not deployed.** Local only.
-
----
+- **S3 does not exist.** Every import evaporates.
+- **Single instance only.** In-memory job store.
+- **Not deployed, and not pushed.** Nine commits on one machine.
+- **No chlorophyll** from any current source.
 
 ## Next
 
-1. **S3, thin.** Object store plus catalogue. Unblocks everything downstream
-   and stops imports evaporating.
-2. **Decide the observation gap** — tabledap, OPeNDAP, or restore the local
-   adapters.
-3. Deploy, with platform auth on.
+1. **Push.** Nine commits exist in one place.
+2. **S3, thin** — object store plus catalogue, designed against gridded data with the profile side deferred knowingly.
+3. **A thin visualization path** — enough of S4/S5/S6 to show one HYCOM field in 3D.
+4. **Observations** — tabledap adapter, closing five requirements.
