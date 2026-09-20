@@ -11,7 +11,7 @@ Commit `1deae5f`, 20 September 2026.
 | Stage | State | Where |
 |---|---|---|
 | S1 Sources | External. Not ours to build. | — |
-| **S2 Ingestion** | **Built.** 79 tests. Two sources. | `ingestion/` |
+| **S2 Ingestion** | **Half done.** Works for model data; 5 of the 11 requirements it owns have no path. | `ingestion/` |
 | S3 Storage | **Next.** Nothing persists today. | — |
 | S4 Processing | Not started | — |
 | S5 Backend | Not started | — |
@@ -23,6 +23,14 @@ S2 has its own operator interface for choosing what to import. **That is not S7.
 ## Chosen sequence
 
 Deadline-driven: **S3 storage, then a thin visualization path, then observations.**
+
+**This is going wide before going deep, deliberately.** S2 is not finished — it
+owns 11 requirements and covers 5 fully, 2 partly, and 4 not at all. Moving to
+S3 with S2 half done is a choice: a vertical slice that can be shown beats a
+complete ingestion layer with nothing to display.
+
+The stages are not being completed in order. They are being made *thin* in
+order, then filled in.
 
 The alternative was observations first, on the argument that S3 designed against gridded data alone will need rework when profiles arrive. That argument is sound and the risk is real — it is accepted deliberately, because a model-only visualization is demonstrable and observations with nothing to display them in are not.
 
