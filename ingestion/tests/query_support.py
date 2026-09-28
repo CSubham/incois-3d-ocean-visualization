@@ -23,7 +23,7 @@ from ingestion.domain.selection import (
 from ingestion.domain.validation import ValidationResult
 from ingestion.query import (
     DatasetExtent, DatasetVersionSummary, ModelFieldDescriptor,
-    ModelFieldQuery, VariableSummary,
+    ScientificQuery, VariableSummary,
 )
 from ingestion.query_memory import (
     InMemoryDatasetVersion, InMemoryModelFieldQuery,
@@ -39,10 +39,10 @@ LIVE_PORT = "5433"
 
 @dataclass(frozen=True)
 class QueryContractCase:
-    query: ModelFieldQuery
+    query: ScientificQuery
     model_version_id: str
     profile_version_id: str
-    undeclared_query: ModelFieldQuery
+    undeclared_query: ScientificQuery
     undeclared_version_id: str
 
 
@@ -94,6 +94,12 @@ def profile_dataset() -> xr.Dataset:
                 ("observation",), [28.0, 27.5],
                 {"units": "degree_Celsius"},
             ),
+            "TEMP_QC": (("observation",), ["1", "2"]),
+            "PSAL": (
+                ("observation",), [34.8, 35.1],
+                {"units": "1e-3"},
+            ),
+            "PSAL_QC": (("observation",), ["1", "1"]),
         },
         coords={
             "time": (
@@ -170,10 +176,16 @@ def profile_package(
         import_id=import_id,
         dataset=dataset,
         geometry=DatasetGeometry.PROFILE,
-        variables=(VariableSpec(
-            name="TEMP", original_name="TEMP", units="degree_Celsius",
-            dimensions=("observation",),
-        ),),
+        variables=(
+            VariableSpec(
+                name="TEMP", original_name="TEMP", units="degree_Celsius",
+                dimensions=("observation",),
+            ),
+            VariableSpec(
+                name="PSAL", original_name="PSAL", units="1e-3",
+                dimensions=("observation",),
+            ),
+        ),
         coordinates=coordinates,
         source=SourceInfo(
             source_id="incois_erddap", source_name="INCOIS ERDDAP",
@@ -182,7 +194,7 @@ def profile_package(
         ),
         selection=ImportSelection(
             source_id="incois_erddap", dataset_id="Indian_ARGO_Floats",
-            variables=("TEMP",),
+            variables=("TEMP", "PSAL"),
         ),
         validation=ValidationResult(checks_run=("coordinates_identified",)),
         metadata=collect_metadata(dataset, coordinates),
@@ -207,6 +219,8 @@ def in_memory_case() -> QueryContractCase:
         ),
         depth_levels=3,
         time_steps=1,
+        depth_values=(0.0, 10.0, 20.0),
+        time_values=("2026-09-28T00:00:00.000000000",),
         extent=extent,
         created_at="2026-09-28T00:00:00+00:00",
     )
@@ -243,12 +257,25 @@ def in_memory_case() -> QueryContractCase:
             id=PROFILE_VERSION_ID,
             dataset="Indian_ARGO_Floats",
             geometry="profile",
-            variables=(VariableSummary("TEMP", "degree_Celsius"),),
-            depth_levels=2, time_steps=2, extent=extent,
+            variables=(
+                VariableSummary("PSAL", "1e-3"),
+                VariableSummary("TEMP", "degree_Celsius"),
+            ),
+            depth_levels=2, time_steps=2,
+            depth_values=(2.0, 10.0),
+            time_values=(
+                "2026-09-28T00:00:00.000000000",
+                "2026-09-28T00:00:00.000000000",
+            ),
+            extent=extent,
             created_at="2026-09-28T00:00:00+00:00",
         ),
         dataset=profile_dataset(),
         descriptors={},
+        coordinate_names={
+            "time": "time", "vertical": "PRES",
+            "latitude": "latitude", "longitude": "longitude",
+        },
     )
     undeclared = InMemoryDatasetVersion(
         summary=DatasetVersionSummary(
@@ -258,6 +285,8 @@ def in_memory_case() -> QueryContractCase:
             variables=summary.variables,
             depth_levels=summary.depth_levels,
             time_steps=summary.time_steps,
+            depth_values=summary.depth_values,
+            time_values=summary.time_values,
             extent=summary.extent,
             created_at=summary.created_at,
         ),

@@ -1,4 +1,4 @@
-"""Composition root for replaceable S3 model-field query implementations."""
+"""Composition root for replaceable S3 scientific query implementations."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from ingestion.config import (
     CATALOGUE_DSN, MODEL_SOURCE_REFERENCES, OBJECT_STORE_ROOT,
     S3_QUERY_BACKEND,
 )
-from ingestion.query import ModelFieldQuery
+from ingestion.query import ScientificQuery
 from ingestion.query_memory import (
     InMemoryDatasetVersion, InMemoryModelFieldQuery,
 )
@@ -22,7 +22,7 @@ def build_model_field_query(
     *,
     environ: Mapping[str, str] | None = None,
     memory_versions: Iterable[InMemoryDatasetVersion] = (),
-) -> ModelFieldQuery:
+) -> ScientificQuery:
     """Build the configured query once; workflows receive only its contract."""
     configured = os.environ if environ is None else environ
     backend = configured.get("S3_QUERY_BACKEND", S3_QUERY_BACKEND).strip().lower()

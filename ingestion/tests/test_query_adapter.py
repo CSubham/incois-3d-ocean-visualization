@@ -43,8 +43,10 @@ def _version(**changes):
         },
         "source_details": {
             "provider": "fixture",
+            "provider_code": "NOAA/NCEI",
             "request_url": "https://example.invalid/model",
             "download_path": "/private/download/model.nc",
+            "catalogue": "postgresql://private-secret/catalogue",
         },
         "time_start": datetime(2026, 9, 28, tzinfo=timezone.utc),
         "time_end": datetime(2026, 9, 28, tzinfo=timezone.utc),
@@ -92,8 +94,13 @@ class FakeCursor:
         sql = str(statement)
         self.connection.calls.append((sql, parameters))
         if "FROM dataset_version" in sql:
-            self.result = ([self.connection.version]
-                           if self.connection.version is not None else [])
+            if "WHERE import_id = %s" in sql:
+                self.result = [
+                    row for row in self.connection.versions
+                    if row["import_id"] == parameters[0]
+                ]
+            else:
+                self.result = list(self.connection.versions)
         elif "FROM dataset_variable" in sql:
             requested = set(parameters[0])
             self.result = [
@@ -112,8 +119,10 @@ class FakeCursor:
 
 
 class FakeConnection:
-    def __init__(self, version=None, variables=None):
+    def __init__(self, version=None, variables=None, versions=None):
         self.version = _version() if version is None else version
+        self.versions = ([self.version] if versions is None
+                         else list(versions))
         self.variables = _variables() if variables is None else variables
         self.calls = []
         self.closed = False
@@ -154,9 +163,10 @@ DECLARATION = ModelSourceReference(
 )
 
 
-def _query(*, version=None, variables=None, dataset=None,
+def _query(*, version=None, versions=None, variables=None, dataset=None,
            declarations=None, object_failure=None):
-    connection = FakeConnection(version=version, variables=variables)
+    connection = FakeConnection(
+        version=version, versions=versions, variables=variables)
     objects = FakeObjects(dataset=dataset, failure=object_failure)
     query = CatalogueModelFieldQuery(
         SECRET_DSN,
@@ -185,10 +195,13 @@ def test_descriptor_maps_catalogue_coordinates_and_source_declarations():
         assert descriptor.provenance["reference_basis"]["crs"] == (
             "source-backed fixture declaration")
         assert descriptor.provenance["source"]["details"] == {
+            "_withheld": True,
             "provider": "fixture",
+            "provider_code": "NOAA/NCEI",
             "request_url": "https://example.invalid/model",
         }
         assert descriptor.provenance["global_attributes"] == {
+            "_withheld": True,
             "title": "model",
         }
         assert "source" not in managed.dataset.encoding
@@ -202,6 +215,64 @@ def test_descriptor_maps_catalogue_coordinates_and_source_declarations():
     assert all(MODEL_VERSION_ID not in call[0]
                for call in connection.calls)
     assert connection.calls[0][1] == (MODEL_VERSION_ID,)
+
+
+def test_summary_reads_exact_coordinate_values_without_loading_field():
+    dataset = model_dataset()
+    query, _, objects = _query(dataset=dataset)
+
+    summary = query.describe_version(MODEL_VERSION_ID)
+
+    assert summary.depth_levels == 3
+    assert summary.depth_values == (0.0, 10.0, 20.0)
+    assert summary.time_steps == 1
+    assert summary.time_values[0].startswith("2026-09-28T00:00:00")
+    assert dataset["water_temp"].variable._in_memory is True
+    assert objects.close_calls == 1
+
+
+def test_listing_skips_and_reports_an_unreadable_managed_version():
+    query, _, _ = _query(object_failure=RuntimeError(OBJECT_REFERENCE))
+
+    listing = query.list_model_versions()
+
+    assert listing.versions == ()
+    assert len(listing.unavailable) == 1
+    assert listing.unavailable[0].id == MODEL_VERSION_ID
+    assert "could not be opened" in listing.unavailable[0].reason
+    assert OBJECT_REFERENCE not in repr(listing)
+    assert SECRET_DSN not in repr(listing)
+
+
+def test_listing_keeps_readable_versions_when_another_object_is_unreadable():
+    broken_id = "broken-version"
+    broken_reference = "/private/broken.nc"
+    versions = (
+        _version(),
+        _version(import_id=broken_id, object_ref=broken_reference),
+    )
+
+    class MixedObjects(FakeObjects):
+        def open(self, reference):
+            if reference == broken_reference:
+                raise RuntimeError(reference)
+            return super().open(reference)
+
+    connection = FakeConnection(versions=versions)
+    query = CatalogueModelFieldQuery(
+        SECRET_DSN,
+        MixedObjects(),
+        {"hycom_opendap": DECLARATION},
+        connect=lambda dsn: connection,
+    )
+
+    listing = query.list_model_versions()
+
+    assert [summary.id for summary in listing] == [MODEL_VERSION_ID]
+    assert [(item.id, item.reason) for item in listing.unavailable] == [
+        (broken_id, f"dataset version {broken_id!r} could not be opened"),
+    ]
+    assert broken_reference not in repr(listing)
 
 
 def test_cf_grid_mapping_and_vertical_direction_take_precedence():

@@ -1,4 +1,4 @@
-"""PostgreSQL catalogue and ObjectStore model-field query adapter."""
+"""PostgreSQL catalogue and ObjectStore scientific query adapter."""
 
 from __future__ import annotations
 
@@ -7,15 +7,20 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
+import numpy as np
 import psycopg
 import xarray as xr
 from psycopg.rows import dict_row
 
 from ingestion.query import (
-    DatasetExtent, DatasetVersionSummary, ManagedModelField,
-    ModelFieldDescriptor, ModelFieldQuery, ModelFieldQueryError,
-    NotAModelField, UndeclaredReference, VariableSummary,
+    DatasetExtent, DatasetVersionListing, DatasetVersionSummary,
+    ManagedModelField, ModelFieldDescriptor, ModelFieldQueryError,
+    NotAModelField, NotAnObservationProfile, ObservationProfile,
+    ProfileIdentity, ProfileMarker, ProfileNotFound, ProfileSearch,
+    ProfileValue, ProfileVariable, ScientificQuery,
+    UnavailableDatasetVersion, UndeclaredReference, VariableSummary,
     VariableUnavailable, VersionNotFound,
 )
 from ingestion.storage.objects import ObjectStore
@@ -48,8 +53,34 @@ FROM dataset_variable
 WHERE import_id = ANY(%s)
 ORDER BY import_id, name
 """
+_PROFILE_MARKERS_SQL = """
+SELECT import_id, platform_id, cycle, observed_at,
+       ST_X(position::geometry) AS longitude,
+       ST_Y(position::geometry) AS latitude
+FROM observation_profile
+WHERE platform_id IS NOT NULL
+  AND cycle IS NOT NULL
+  AND observed_at >= %s
+  AND observed_at <= %s
+  AND ST_Intersects(
+      position,
+      ST_MakeEnvelope(%s, %s, %s, %s, 4326)::geography)
+ORDER BY observed_at, import_id, platform_id, cycle
+"""
+_PROFILE_SQL = """
+SELECT import_id, platform_id, cycle, observed_at,
+       ST_X(position::geometry) AS longitude,
+       ST_Y(position::geometry) AS latitude
+FROM observation_profile
+WHERE import_id = %s AND platform_id = %s AND cycle = %s
+"""
 
 _REQUIRED_COORDINATES = ("time", "vertical", "latitude", "longitude")
+_OBSERVATION_GEOMETRIES = {"profile", "trajectory", "trajectory_profile",
+                           "point"}
+_PLATFORM_HINTS = ("platform_number", "platform", "wmo", "float",
+                   "trajectory", "glider", "station")
+_CYCLE_HINTS = ("cycle_number", "cycle", "profile_id", "profile", "cast")
 _SENSITIVE_KEY_PARTS = (
     "path", "object", "dsn", "connection", "cursor", "sql", "bucket",
     "container", "credential", "password", "secret", "token",
@@ -58,11 +89,18 @@ _STORAGE_ENCODING_KEY_PARTS = (
     "source", "path", "filename", "object", "dsn", "bucket", "container",
 )
 _WINDOWS_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+_CONNECTION_STRING = re.compile(
+    r"(?:^|\s)(?:host|hostaddr|port|dbname|user|password)\s*=",
+    re.IGNORECASE,
+)
+_SENSITIVE_SCHEMES = {
+    "abfs", "abfss", "azure", "file", "gs", "postgres", "postgresql", "s3",
+}
 _OMIT = object()
 
 
-class CatalogueModelFieldQuery(ModelFieldQuery):
-    """Read managed model fields without leaking catalogue/store details."""
+class CatalogueModelFieldQuery(ScientificQuery):
+    """Read managed fields and profiles without leaking backend details."""
 
     def __init__(
         self,
@@ -77,7 +115,7 @@ class CatalogueModelFieldQuery(ModelFieldQuery):
         self._source_references = dict(source_references)
         self._connect = connect
 
-    def list_model_versions(self) -> tuple[DatasetVersionSummary, ...]:
+    def list_model_versions(self) -> DatasetVersionListing:
         try:
             with self._connection() as connection:
                 with connection.cursor() as cursor:
@@ -86,21 +124,37 @@ class CatalogueModelFieldQuery(ModelFieldQuery):
                     variables = self._variables(cursor, [
                         str(row["import_id"]) for row in versions
                     ])
-            return tuple(
-                _summary(row, variables[str(row["import_id"])])
-                for row in versions
-            )
         except ModelFieldQueryError:
             raise
         except Exception:
             raise ModelFieldQueryError(
                 "the model-field catalogue could not be read") from None
 
+        summaries: list[DatasetVersionSummary] = []
+        unavailable: list[UnavailableDatasetVersion] = []
+        for version in versions:
+            version_id = str(version["import_id"])
+            try:
+                summaries.append(self._summary_from_object(
+                    version, variables[version_id]))
+            except ModelFieldQueryError as exc:
+                unavailable.append(UnavailableDatasetVersion(
+                    version_id, str(exc)))
+            except Exception:
+                unavailable.append(UnavailableDatasetVersion(
+                    version_id,
+                    "the managed dataset version could not be read",
+                ))
+        return DatasetVersionListing(
+            versions=tuple(summaries),
+            unavailable=tuple(unavailable),
+        )
+
     def describe_version(
             self, dataset_version_id: str) -> DatasetVersionSummary:
         version, variables = self._version(dataset_version_id)
         _require_grid(version)
-        return _summary(version, variables)
+        return self._summary_from_object(version, variables)
 
     def open_model_field(
             self, dataset_version_id: str,
@@ -144,6 +198,93 @@ class CatalogueModelFieldQuery(ModelFieldQuery):
             _close_quietly(source_dataset)
             raise ModelFieldQueryError(
                 "the managed scientific object could not be decoded") from None
+
+    def find_profile_markers(
+            self, search: ProfileSearch) -> tuple[ProfileMarker, ...]:
+        try:
+            with self._connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(_PROFILE_MARKERS_SQL, (
+                        search.time_start, search.time_end,
+                        search.west, search.south, search.east, search.north,
+                    ))
+                    rows = tuple(cursor.fetchall())
+            return tuple(_profile_marker(row) for row in rows)
+        except ModelFieldQueryError:
+            raise
+        except Exception:
+            raise ModelFieldQueryError(
+                "the observation-profile catalogue could not be read") from None
+
+    def get_profile(self, identity: ProfileIdentity) -> ObservationProfile:
+        record = self._profile_record(identity)
+        version, variables = self._version(identity.dataset_version_id)
+        _require_observation_profile(version)
+        reference = version.get("object_ref")
+        if not isinstance(reference, str) or not reference:
+            raise UndeclaredReference(
+                identity.dataset_version_id, "a managed scientific object")
+        try:
+            source_dataset = self._objects.open(reference)
+        except Exception:
+            raise ModelFieldQueryError(
+                "the managed observation object could not be opened") from None
+        try:
+            return _observation_profile(
+                version, variables, source_dataset, identity, record)
+        except ModelFieldQueryError:
+            raise
+        except Exception:
+            raise ModelFieldQueryError(
+                "the managed observation profile could not be decoded") from None
+        finally:
+            _close_quietly(source_dataset)
+
+    def _summary_from_object(
+        self,
+        version: Mapping[str, Any],
+        variables: Sequence[Mapping[str, Any]],
+    ) -> DatasetVersionSummary:
+        version_id = str(version["import_id"])
+        reference = version.get("object_ref")
+        if not isinstance(reference, str) or not reference:
+            raise UndeclaredReference(
+                version_id, "a managed scientific object")
+        try:
+            dataset = self._objects.open(reference)
+        except Exception:
+            raise ModelFieldQueryError(
+                f"dataset version {version_id!r} could not be opened") from None
+        try:
+            return _summary(version, variables, dataset)
+        except ModelFieldQueryError:
+            raise
+        except Exception:
+            raise ModelFieldQueryError(
+                f"dataset version {version_id!r} could not be decoded") from None
+        finally:
+            _close_quietly(dataset)
+
+    def _profile_record(
+            self, identity: ProfileIdentity) -> Mapping[str, Any]:
+        try:
+            with self._connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(_PROFILE_SQL, (
+                        identity.dataset_version_id,
+                        identity.platform_id,
+                        identity.cycle,
+                    ))
+                    rows = tuple(cursor.fetchall())
+        except Exception:
+            raise ModelFieldQueryError(
+                "the observation-profile catalogue could not be read") from None
+        if not rows:
+            raise ProfileNotFound(identity)
+        if len(rows) != 1:
+            raise ModelFieldQueryError(
+                "the requested observation-profile identity is ambiguous")
+        return rows[0]
 
     def _version(
         self, dataset_version_id: str,
@@ -190,8 +331,15 @@ def _require_grid(version: Mapping[str, Any]) -> None:
         raise NotAModelField(str(version["import_id"]), geometry)
 
 
+def _require_observation_profile(version: Mapping[str, Any]) -> None:
+    geometry = str(version.get("geometry", ""))
+    if geometry not in _OBSERVATION_GEOMETRIES:
+        raise NotAnObservationProfile(str(version["import_id"]), geometry)
+
+
 def _summary(version: Mapping[str, Any],
-             variables: Sequence[Mapping[str, Any]]) -> DatasetVersionSummary:
+             variables: Sequence[Mapping[str, Any]],
+             dataset: xr.Dataset) -> DatasetVersionSummary:
     version_id = str(version["import_id"])
     coordinate_names = _coordinate_names(version, version_id)
     sizes = _required_mapping(version, "sizes", version_id)
@@ -201,6 +349,19 @@ def _summary(version: Mapping[str, Any],
     except (KeyError, TypeError, ValueError):
         raise UndeclaredReference(
             version_id, "time and depth coordinate dimensions") from None
+    time_name = coordinate_names["time"]
+    depth_name = coordinate_names["vertical"]
+    if time_name not in dataset.variables:
+        raise UndeclaredReference(
+            version_id, f"the time coordinate {time_name!r}")
+    if depth_name not in dataset.variables:
+        raise UndeclaredReference(
+            version_id, f"the depth coordinate {depth_name!r}")
+    time_values = _time_coordinate_values(dataset[time_name], version_id)
+    depth_values = _depth_coordinate_values(dataset[depth_name], version_id)
+    if len(time_values) != time_steps or len(depth_values) != depth_levels:
+        raise UndeclaredReference(
+            version_id, "coordinate values matching catalogue dimensions")
     return DatasetVersionSummary(
         id=version_id,
         dataset=str(version["dataset_id"]),
@@ -215,6 +376,8 @@ def _summary(version: Mapping[str, Any],
         ),
         depth_levels=depth_levels,
         time_steps=time_steps,
+        depth_values=depth_values,
+        time_values=time_values,
         extent=DatasetExtent(
             time_start=_iso(version.get("time_start")),
             time_end=_iso(version.get("time_end")),
@@ -410,16 +573,213 @@ def _optional_float(value: Any) -> float | None:
     return float(value) if value is not None else None
 
 
+def _time_coordinate_values(array: xr.DataArray,
+                            version_id: str) -> tuple[str, ...]:
+    if len(array.dims) != 1:
+        raise UndeclaredReference(
+            version_id, f"one-dimensional time coordinate {array.name!r}")
+    values: list[str] = []
+    for value in np.ravel(array.values):
+        timestamp = _timestamp(value)
+        if timestamp is None:
+            raise UndeclaredReference(version_id, "complete time values")
+        values.append(timestamp)
+    return tuple(values)
+
+
+def _depth_coordinate_values(array: xr.DataArray,
+                             version_id: str) -> tuple[float, ...]:
+    if len(array.dims) != 1:
+        raise UndeclaredReference(
+            version_id, f"one-dimensional depth coordinate {array.name!r}")
+    try:
+        values = tuple(float(value) for value in np.ravel(array.values))
+    except (TypeError, ValueError):
+        raise UndeclaredReference(version_id, "numeric depth values") from None
+    if not all(np.isfinite(value) for value in values):
+        raise UndeclaredReference(version_id, "finite depth values")
+    return values
+
+
+def _profile_marker(row: Mapping[str, Any]) -> ProfileMarker:
+    version_id = str(row.get("import_id", ""))
+    platform_id = row.get("platform_id")
+    cycle = row.get("cycle")
+    observed_at = _iso(row.get("observed_at"))
+    if (not isinstance(platform_id, str) or not platform_id.strip()
+            or not isinstance(cycle, str) or not cycle.strip()
+            or observed_at is None):
+        raise UndeclaredReference(version_id, "exact profile identity and time")
+    try:
+        longitude = float(row["longitude"])
+        latitude = float(row["latitude"])
+    except (KeyError, TypeError, ValueError):
+        raise UndeclaredReference(version_id, "profile position") from None
+    return ProfileMarker(
+        identity=ProfileIdentity(version_id, platform_id, cycle),
+        longitude=longitude,
+        latitude=latitude,
+        observed_at=observed_at,
+    )
+
+
+def _observation_profile(
+    version: Mapping[str, Any],
+    variables: Sequence[Mapping[str, Any]],
+    dataset: xr.Dataset,
+    identity: ProfileIdentity,
+    profile_record: Mapping[str, Any],
+) -> ObservationProfile:
+    version_id = identity.dataset_version_id
+    if str(profile_record.get("import_id")) != version_id:
+        raise ProfileNotFound(identity)
+    names = _coordinate_names(version, version_id)
+    for role, name in names.items():
+        if name not in dataset.variables:
+            exposed = "depth" if role == "vertical" else role
+            raise UndeclaredReference(
+                version_id, f"the {exposed} coordinate {name!r}")
+    platform_name = _named(dataset, _PLATFORM_HINTS)
+    cycle_name = _named(dataset, _CYCLE_HINTS)
+    if platform_name is None or cycle_name is None:
+        raise UndeclaredReference(
+            version_id, "platform and cycle identity variables")
+    platform = dataset[platform_name]
+    cycle = dataset[cycle_name]
+    if len(platform.dims) != 1 or cycle.dims != platform.dims:
+        raise UndeclaredReference(
+            version_id, "one-dimensional platform and cycle identity")
+    sample_dim = platform.dims[0]
+    platform_values = _text_values(platform.values)
+    cycle_values = _text_values(cycle.values)
+    positions = np.asarray([
+        index for index, (platform_id, cycle_id) in enumerate(zip(
+            platform_values, cycle_values))
+        if platform_id == identity.platform_id and cycle_id == identity.cycle
+    ], dtype=np.intp)
+    if not positions.size:
+        raise ProfileNotFound(identity)
+    selected = dataset.isel({sample_dim: positions})
+    depth_name = names["vertical"]
+    time_name = names["time"]
+    return ObservationProfile(
+        identity=identity,
+        depth_coordinate=depth_name,
+        depth_units=_optional_text(selected[depth_name].attrs.get("units")),
+        depth_values=_profile_values(
+            selected[depth_name], sample_dim, version_id),
+        time_coordinate=time_name,
+        timestamps=tuple(
+            _timestamp(value)
+            for value in np.ravel(selected[time_name].values)
+        ),
+        variables=tuple(
+            _profile_variable(selected, variable, sample_dim, version_id)
+            for variable in variables
+        ),
+    )
+
+
+def _profile_variable(
+    dataset: xr.Dataset,
+    variable: Mapping[str, Any],
+    sample_dim: str,
+    version_id: str,
+) -> ProfileVariable:
+    name = str(variable["name"])
+    if name not in dataset.variables:
+        raise VariableUnavailable(version_id, name)
+    quality_name = _quality_name(dataset, name)
+    return ProfileVariable(
+        name=name,
+        units=_optional_text(variable.get("units")),
+        values=_profile_values(dataset[name], sample_dim, version_id),
+        quality_control_name=quality_name,
+        quality_control=(
+            _profile_values(dataset[quality_name], sample_dim, version_id)
+            if quality_name is not None else None
+        ),
+    )
+
+
+def _profile_values(array: xr.DataArray, sample_dim: str,
+                    version_id: str) -> tuple[ProfileValue, ...]:
+    if array.dims != (sample_dim,):
+        raise UndeclaredReference(
+            version_id, f"one-dimensional profile variable {array.name!r}")
+    return tuple(_profile_value(value) for value in np.ravel(array.values))
+
+
+def _profile_value(value: Any) -> ProfileValue:
+    if np.ma.is_masked(value):
+        return None
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, float) and np.isnan(value):
+        return None
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    return str(value)
+
+
+def _timestamp(value: Any) -> str | None:
+    if isinstance(value, np.datetime64):
+        if np.isnat(value):
+            return None
+        return str(np.datetime_as_string(value, unit="ns"))
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    plain = _profile_value(value)
+    return str(plain) if plain is not None else None
+
+
+def _named(dataset: xr.Dataset, hints: tuple[str, ...]) -> str | None:
+    lowered = {str(name).lower(): str(name) for name in dataset.variables}
+    for hint in hints:
+        if hint in lowered:
+            return lowered[hint]
+    for name in dataset.variables:
+        if any(hint in str(name).lower() for hint in hints):
+            return str(name)
+    return None
+
+
+def _quality_name(dataset: xr.Dataset, variable: str) -> str | None:
+    expected = f"{variable}_qc".lower()
+    return next(
+        (str(name) for name in dataset.variables
+         if str(name).lower() == expected),
+        None,
+    )
+
+
+def _text_values(values: Any) -> tuple[str, ...]:
+    return tuple(str(_profile_value(value) or "")
+                 for value in np.ravel(values))
+
+
+def _optional_text(value: Any) -> str | None:
+    return str(value) if value is not None else None
+
+
 def _portable_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
     cleaned: dict[str, Any] = {}
+    withheld = False
     for key, item in value.items():
         name = str(key)
         normalized = name.lower().replace("-", "_")
         if any(part in normalized for part in _SENSITIVE_KEY_PARTS):
+            withheld = True
             continue
         portable = _portable_value(item)
         if portable is not _OMIT:
             cleaned[name] = portable
+        else:
+            withheld = True
+    if withheld:
+        cleaned["_withheld"] = True
     return cleaned
 
 
@@ -428,22 +788,26 @@ def _portable_value(value: Any) -> Any:
         return _portable_mapping(value)
     if isinstance(value, (list, tuple)):
         items = tuple(_portable_value(item) for item in value)
-        return [item for item in items if item is not _OMIT]
+        return [({"_withheld": True} if item is _OMIT else item)
+                for item in items]
     if isinstance(value, (datetime, date)):
         return value.isoformat()
-    if isinstance(value, str) and _looks_like_filesystem_path(value):
+    if isinstance(value, str) and _looks_like_sensitive_reference(value):
         return _OMIT
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     return str(value)
 
 
-def _looks_like_filesystem_path(value: str) -> bool:
-    if "://" in value:
-        return False
-    return (value.startswith(("/", "\\\\"))
-            or bool(_WINDOWS_PATH.match(value))
-            or "/" in value or "\\" in value)
+def _looks_like_sensitive_reference(value: str) -> bool:
+    stripped = value.strip()
+    scheme = urlsplit(stripped).scheme.lower()
+    if scheme in _SENSITIVE_SCHEMES:
+        return True
+    if _CONNECTION_STRING.search(stripped):
+        return True
+    return (stripped.startswith(("/", "\\\\", "./", "../", "~/"))
+            or bool(_WINDOWS_PATH.match(stripped)))
 
 
 def _remove_storage_references(dataset: xr.Dataset) -> None:
@@ -461,7 +825,7 @@ def _portable_encoding(encoding: Mapping[str, Any]) -> dict[str, Any]:
             for part in _STORAGE_ENCODING_KEY_PARTS
         )
         and not (
-            isinstance(value, str) and _looks_like_filesystem_path(value)
+            isinstance(value, str) and _looks_like_sensitive_reference(value)
         )
     }
 
