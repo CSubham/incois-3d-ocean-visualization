@@ -18,12 +18,16 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 
 from processing import LocalExecutor, ProductBuilder
 from serving.coordinator import RequestCoordinator
 from serving.http import Catalogue, create_app
+
+if TYPE_CHECKING:
+    from serving.observations import ObservationService
 
 #: The built browser app, served from the same origin when present.
 DEFAULT_WEB_ROOT = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -32,6 +36,8 @@ DEFAULT_WEB_ROOT = Path(__file__).resolve().parents[1] / "web" / "dist"
 #: browser budget, which S6 owns. Five million float32 cells is about 20 MB.
 DEFAULT_MAXIMUM_POINTS = 500_000
 DEFAULT_MAXIMUM_CELLS = 5_000_000
+#: Markers per request. Each marker's product reads its full profile record.
+DEFAULT_MAXIMUM_MARKERS = 2_000
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -55,7 +61,8 @@ def _web_root() -> Path | None:
 
 
 def build_app(builder: ProductBuilder,
-              catalogue: Catalogue | None = None) -> FastAPI:
+              catalogue: Catalogue | None = None,
+              observations: ObservationService | None = None) -> FastAPI:
     executor = LocalExecutor(
         builder,
         maximum_points=_positive_int("SERVING_MAX_POINTS",
@@ -64,13 +71,25 @@ def build_app(builder: ProductBuilder,
                                     DEFAULT_MAXIMUM_CELLS),
         retained_jobs=_positive_int("SERVING_RETAINED_JOBS", 256),
     )
-    return create_app(RequestCoordinator(executor), catalogue, _web_root())
+    return create_app(RequestCoordinator(executor), catalogue, _web_root(),
+                      observations)
 
 
 def create_default_app() -> FastAPI:
     """The deployable app: product builder and catalogue over S3 reads."""
     from ingestion.composition import build_model_field_query
-    from processing.managed import managed_point_field_builder
+    from processing.managed import (
+        managed_observation_marker_builder, managed_observation_profile_builder,
+        managed_point_field_builder,
+    )
+    from serving.observations import ObservationService
 
     query = build_model_field_query()
-    return build_app(managed_point_field_builder(query), catalogue=query)
+    observations = ObservationService(
+        markers=managed_observation_marker_builder(
+            query, maximum_markers=_positive_int(
+                "SERVING_MAX_MARKERS", DEFAULT_MAXIMUM_MARKERS)),
+        profiles=managed_observation_profile_builder(query),
+    )
+    return build_app(managed_point_field_builder(query), catalogue=query,
+                     observations=observations)

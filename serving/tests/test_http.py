@@ -196,10 +196,15 @@ def test_composition_reads_its_limits_from_the_environment(monkeypatch):
         compose.build_app(fixtures.builder())
 
 
-def test_serving_loads_no_storage_driver_or_ingestion_code():
+def test_serving_loads_only_the_s3_contract_never_storage_or_config():
+    # S5 reads S3 through its query contract (ingestion.query) and nothing
+    # else: no storage adapter, driver, configuration or composition.
     probe = ("import sys, serving.compose; "
              "bad = sorted(m for m in sys.modules if m == 'psycopg' "
-             "or m.startswith(('psycopg.', 'ingestion'))); print(bad)")
+             "or m.startswith(('psycopg.', 'ingestion.storage', "
+             "'ingestion.config', 'ingestion.composition', "
+             "'ingestion.adapters', 'ingestion.web', 'ingestion.service'))); "
+             "print(bad)")
     result = subprocess.run([sys.executable, "-c", probe], check=True,
                             capture_output=True, text=True)
 
