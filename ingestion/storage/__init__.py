@@ -10,8 +10,9 @@ from ingestion.storage.objects import (
     LocalObjectStore, ObjectStore, ObjectStoreError,
 )
 from ingestion.storage.postgres import PostgresStorage, StorageError
+from ingestion.storage.query import CatalogueModelFieldQuery
 from ingestion.storage.sink import DevelopmentSink, RecordingSink
 
 __all__ = ["PostgresStorage", "StorageError", "ObjectStore",
            "LocalObjectStore", "ObjectStoreError", "DevelopmentSink",
-           "RecordingSink"]
+           "RecordingSink", "CatalogueModelFieldQuery"]

@@ -32,6 +32,10 @@ CATALOGUE_DSN: str = os.environ.get(
     "INGESTION_CATALOGUE_DSN",
     "postgresql://incois:incois@127.0.0.1:5433/incois")
 
+#: The S3 read implementation is chosen once by the composition root.
+S3_QUERY_BACKEND: str = os.environ.get(
+    "S3_QUERY_BACKEND", "catalogue").strip().lower()
+
 
 # -- Where retrieved data is written ---------------------------------------
 
@@ -130,6 +134,15 @@ class OpendapServer:
     max_values_per_request: int = 2_000_000
 
 
+@dataclass(frozen=True)
+class ModelSourceReference:
+    """Explicit spatial references used only when source CF metadata omits it."""
+
+    crs: str
+    vertical_positive: str
+    basis: str
+
+
 HYCOM = OpendapServer(
     source_id="hycom_opendap",
     name="HYCOM",
@@ -150,3 +163,20 @@ HYCOM = OpendapServer(
 )
 
 OPENDAP_SERVERS: tuple[OpendapServer, ...] = (HYCOM,)
+
+
+# HYCOM GLBy0.08 publishes rectilinear longitude/latitude axes in
+# degrees_east/degrees_north on the WGS84 geographic grid, and its depth axis
+# declares CF ``positive=down``.  The file has no CF grid_mapping variable, so
+# this source-backed declaration prevents S3 or S4 from silently guessing.
+MODEL_SOURCE_REFERENCES: dict[str, ModelSourceReference] = {
+    HYCOM.source_id: ModelSourceReference(
+        crs="EPSG:4326",
+        vertical_positive="down",
+        basis=(
+            "HYCOM GLBy0.08 source metadata declares rectilinear longitude "
+            "and latitude in degrees_east/degrees_north on WGS84, with the "
+            "depth coordinate positive down"
+        ),
+    ),
+}
