@@ -14,7 +14,7 @@ from processing.errors import (
     AllMissingSubsetError, EmptySubsetError, GridValidationError,
     InvalidRequestError, ManagedDataUnavailableError, PointBudgetError,
     ProcessingError, TimeSelectionError, UnknownRequestError,
-    VariableSelectionError,
+    VariableSelectionError, WorkLimitError,
 )
 from processing.execution import (
     ExecutorCapabilities, Failure, JobState, LocalExecutor, ProductBuilder,
@@ -39,7 +39,7 @@ __all__ = [
     "SpatialReference", "TimeSelectionError", "VariableSelectionError",
     "ExecutorCapabilities", "Failure", "JobState", "LocalExecutor",
     "ManagedDataUnavailableError", "ProductBuilder", "ProductExecutor",
-    "ProductJob", "ProductRequest", "UnknownRequestError", "failure_for",
+    "ProductJob", "ProductRequest", "UnknownRequestError", "WorkLimitError", "failure_for",
     "build_sampled_scalar_point_field", "prepare_sampled_scalar_point_field",
     "subset_scalar_field",
 ]

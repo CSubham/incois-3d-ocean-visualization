@@ -131,7 +131,8 @@ def prepare_sampled_scalar_point_field(
         dataset,
         descriptor: ScalarGridDescriptor,
         selection: ScalarSelection,
-        sampling: SamplingRequest) -> ScalarPointFieldProduct:
+        sampling: SamplingRequest,
+        maximum_cells: int | None = None) -> ScalarPointFieldProduct:
     """Run the pure in-memory subset-and-build path."""
-    subset = subset_scalar_field(dataset, descriptor, selection)
+    subset = subset_scalar_field(dataset, descriptor, selection, maximum_cells)
     return build_sampled_scalar_point_field(subset, sampling)

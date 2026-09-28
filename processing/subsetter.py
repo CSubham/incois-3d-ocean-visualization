@@ -13,7 +13,7 @@ from processing.domain import (
 )
 from processing.errors import (
     EmptySubsetError, GridValidationError, TimeSelectionError,
-    VariableSelectionError,
+    VariableSelectionError, WorkLimitError,
 )
 
 
@@ -87,8 +87,13 @@ def _bounded_indices(values: np.ndarray, minimum: float, maximum: float,
 
 def subset_scalar_field(dataset: xr.Dataset,
                         descriptor: ScalarGridDescriptor,
-                        selection: ScalarSelection) -> ScalarSubset:
-    """Select a source-exact 3D scalar subset without modifying ``dataset``."""
+                        selection: ScalarSelection,
+                        maximum_cells: int | None = None) -> ScalarSubset:
+    """Select a source-exact 3D scalar subset without modifying ``dataset``.
+
+    ``maximum_cells`` is checked from the coordinates alone, before any value
+    is read, so an oversized selection costs nothing to refuse.
+    """
     if not isinstance(dataset, xr.Dataset):
         raise GridValidationError("decoded input must be an xarray.Dataset")
 
@@ -173,6 +178,14 @@ def subset_scalar_field(dataset: xr.Dataset,
     longitude_indices = _bounded_indices(
         longitude_values, selection.area.west, selection.area.east,
         "longitude", roles.longitude)
+
+    cells = depth_indices.size * latitude_indices.size * longitude_indices.size
+    if maximum_cells is not None and cells > maximum_cells:
+        raise WorkLimitError(
+            f"the selection covers {cells} cells ({depth_indices.size} depth "
+            f"x {latitude_indices.size} latitude x {longitude_indices.size} "
+            f"longitude); this server builds at most {maximum_cells}. Narrow "
+            "the area or depth range")
 
     ordered = variable.isel({
         coordinate_dimensions["time"]: time_index,

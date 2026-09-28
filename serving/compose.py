@@ -19,9 +19,10 @@ from processing import LocalExecutor, ProductBuilder
 from serving.coordinator import RequestCoordinator
 from serving.http import create_app
 
-#: A server-side ceiling on points per product. It protects the service; it
-#: is not a tested browser budget, which S6 owns.
+#: Server-side ceilings. They protect the service; neither is a tested
+#: browser budget, which S6 owns. Five million float32 cells is about 20 MB.
 DEFAULT_MAXIMUM_POINTS = 500_000
+DEFAULT_MAXIMUM_CELLS = 5_000_000
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -42,6 +43,8 @@ def build_app(builder: ProductBuilder) -> FastAPI:
         builder,
         maximum_points=_positive_int("SERVING_MAX_POINTS",
                                      DEFAULT_MAXIMUM_POINTS),
+        maximum_cells=_positive_int("SERVING_MAX_CELLS",
+                                    DEFAULT_MAXIMUM_CELLS),
         retained_jobs=_positive_int("SERVING_RETAINED_JOBS", 256),
     )
     return create_app(RequestCoordinator(executor))

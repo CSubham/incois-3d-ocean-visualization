@@ -29,6 +29,7 @@ from processing.errors import (
     AllMissingSubsetError, EmptySubsetError, GridValidationError,
     InvalidRequestError, ManagedDataUnavailableError, PointBudgetError,
     TimeSelectionError, UnknownRequestError, VariableSelectionError,
+    WorkLimitError,
 )
 
 log = logging.getLogger(__name__)
@@ -36,20 +37,41 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ProductRequest:
-    """One point-field product for one stored dataset version."""
+    """One point-field product for one stored dataset version.
+
+    ``sampling.maximum_points`` is the effective budget. When a caller
+    reduced what the client asked for, ``requested_maximum_points`` keeps the
+    original so the reduction can be disclosed. ``maximum_cells`` is the work
+    ceiling the executor applies; a builder must pass it to the subsetter.
+    """
 
     dataset_version_id: str
     selection: ScalarSelection
     sampling: SamplingRequest
+    requested_maximum_points: Optional[int] = None
+    maximum_cells: Optional[int] = None
 
     def __post_init__(self) -> None:
         if (not isinstance(self.dataset_version_id, str)
                 or not self.dataset_version_id.strip()):
             raise InvalidRequestError("a dataset_version_id is required")
+        requested = self.requested_maximum_points
+        if requested is not None and requested < self.sampling.maximum_points:
+            raise InvalidRequestError(
+                "the effective point budget cannot exceed what was requested")
+        if self.maximum_cells is not None and self.maximum_cells < 1:
+            raise InvalidRequestError("maximum_cells must be positive")
+
+    @property
+    def budget_reduced(self) -> bool:
+        return (self.requested_maximum_points is not None
+                and self.requested_maximum_points
+                > self.sampling.maximum_points)
 
 
 #: Builds the product for a request. Bound at composition to the storage read
-#: path; raises ProcessingError subclasses for anything the caller can act on.
+#: path; it must pass ``request.maximum_cells`` to the subsetter and raises
+#: ProcessingError subclasses for anything the caller can act on.
 ProductBuilder = Callable[[ProductRequest], ScalarPointFieldProduct]
 
 
@@ -75,6 +97,7 @@ class Failure:
 #: Most specific first: PointBudgetError is an InvalidRequestError.
 _FAILURE_CODES: tuple[tuple[type[Exception], str], ...] = (
     (PointBudgetError, "point_budget"),
+    (WorkLimitError, "work_limit"),
     (InvalidRequestError, "invalid_request"),
     (VariableSelectionError, "variable_unavailable"),
     (TimeSelectionError, "time_unavailable"),
@@ -113,6 +136,7 @@ class ExecutorCapabilities:
     """What an executor can and cannot do, declared rather than discovered."""
 
     maximum_points: int
+    maximum_cells: int
     asynchronous: bool
     cancellation: bool
     supersession: bool
@@ -151,11 +175,13 @@ class LocalExecutor(ProductExecutor):
     """
 
     def __init__(self, builder: ProductBuilder, maximum_points: int,
-                 retained_jobs: int = 256) -> None:
-        if maximum_points < 1 or retained_jobs < 1:
-            raise ValueError("maximum_points and retained_jobs must be positive")
+                 maximum_cells: int, retained_jobs: int = 256) -> None:
+        if min(maximum_points, maximum_cells, retained_jobs) < 1:
+            raise ValueError("maximum_points, maximum_cells and retained_jobs "
+                             "must be positive")
         self._builder = builder
         self._maximum_points = maximum_points
+        self._maximum_cells = maximum_cells
         self._retained = retained_jobs
         self._jobs: OrderedDict[str, ProductJob] = OrderedDict()
         self._lock = threading.Lock()
@@ -164,6 +190,7 @@ class LocalExecutor(ProductExecutor):
     def capabilities(self) -> ExecutorCapabilities:
         return ExecutorCapabilities(
             maximum_points=self._maximum_points,
+            maximum_cells=self._maximum_cells,
             asynchronous=False,
             cancellation=False,
             supersession=False,
@@ -176,12 +203,21 @@ class LocalExecutor(ProductExecutor):
             raise PointBudgetError(
                 f"maximum_points {wanted} exceeds this executor's limit of "
                 f"{self._maximum_points}")
+        cells = min(request.maximum_cells or self._maximum_cells,
+                    self._maximum_cells)
+        request = replace(request, maximum_cells=cells)
 
         job = ProductJob(request_id=uuid.uuid4().hex, request=request,
                          state=JobState.RUNNING, submitted_at=_now())
         self._keep(job)
         try:
             product = self._builder(request)
+            built = product.sampling.original_point_count
+            if built > cells:
+                # The builder ignored the ceiling; the product is not served.
+                raise WorkLimitError(
+                    f"the product was built from {built} cells, above this "
+                    f"server's limit of {cells}")
         except Exception as exc:  # every failure becomes a job state
             if failure_for(exc).code == "internal_error":
                 log.exception("product build %s failed", job.request_id)

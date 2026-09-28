@@ -49,12 +49,19 @@ def _links(request_id: str) -> dict[str, str]:
 
 def _view(job: ProductJob) -> dict[str, Any]:
     links = _links(job.request_id)
+    request = job.request
     return {
         "request_id": job.request_id,
         "state": job.state.value,
         "finished": job.state.finished,
         "submitted_at": job.submitted_at,
         "finished_at": job.finished_at,
+        "budget": {
+            "requested_points": request.requested_maximum_points,
+            "effective_points": request.sampling.maximum_points,
+            "reduced_by_server": request.budget_reduced,
+            "maximum_cells": request.maximum_cells,
+        },
         "failure": asdict(job.failure) if job.failure else None,
         "product": (wire.describe(job.product, data_url=links["data"])
                     if job.state is JobState.SUCCEEDED and job.product

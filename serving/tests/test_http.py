@@ -29,7 +29,8 @@ BODY = {
 
 @pytest.fixture()
 def client() -> TestClient:
-    executor = LocalExecutor(fixtures.builder(), maximum_points=100)
+    executor = LocalExecutor(fixtures.builder(), maximum_points=100,
+                             maximum_cells=1000)
     return TestClient(create_app(RequestCoordinator(executor)))
 
 
@@ -57,7 +58,7 @@ def test_a_product_is_requested_described_and_fetched_as_binary(client):
     assert data.headers["content-type"] == wire.MEDIA_TYPE
     assert len(data.content) == described["data"]["byte_length"]
     arrays = wire.decode(described["data"]["arrays"], data.content)
-    expected = LocalExecutor(fixtures.builder(), maximum_points=100).submit(
+    expected = LocalExecutor(fixtures.builder(), maximum_points=100, maximum_cells=1000).submit(
         fixtures.request(5)).product
     np.testing.assert_array_equal(arrays["values"], expected.points.values)
 
@@ -67,13 +68,38 @@ def test_a_product_is_requested_described_and_fetched_as_binary(client):
     ("time", "2026-01-02T00:00:00+05:30", "invalid_request"),
     ("west", 170.0, "invalid_request"),
     ("maximum_points", 0, "point_budget"),
-    ("maximum_points", 101, "point_budget"),
 ])
 def test_invalid_requests_are_rejected_with_a_code(client, field, value, code):
     response = client.post("/api/v1/point-fields", json={**BODY, field: value})
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == code
+
+
+def test_a_budget_over_the_server_ceiling_is_reduced_and_disclosed(client):
+    over = client.post("/api/v1/point-fields",
+                       json={**BODY, "maximum_points": 1000}).json()
+    under = client.post("/api/v1/point-fields", json=BODY).json()
+
+    assert over["state"] == "succeeded"
+    assert over["budget"] == {"requested_points": 1000,
+                              "effective_points": 100,
+                              "reduced_by_server": True,
+                              "maximum_cells": 1000}
+    assert over["product"]["product"]["sampling"]["maximum_points"] == 100
+    assert under["budget"]["reduced_by_server"] is False
+    assert under["budget"]["effective_points"] == 5
+
+
+def test_a_selection_over_the_work_ceiling_fails_with_a_code():
+    executor = LocalExecutor(fixtures.builder(), maximum_points=100,
+                             maximum_cells=11)
+    client = TestClient(create_app(RequestCoordinator(executor)))
+
+    view = client.post("/api/v1/point-fields", json=BODY).json()
+
+    assert view["state"] == "failed"
+    assert view["failure"]["code"] == "work_limit"
 
 
 def test_unexpected_fields_are_refused(client):
@@ -107,7 +133,8 @@ class QueuedExecutor(ProductExecutor):
 
     @property
     def capabilities(self) -> ExecutorCapabilities:
-        return ExecutorCapabilities(maximum_points=10, asynchronous=True,
+        return ExecutorCapabilities(maximum_points=10, maximum_cells=1000,
+                                    asynchronous=True,
                                     cancellation=True, supersession=True,
                                     status_shared_across_instances=True)
 
@@ -147,10 +174,12 @@ def test_another_executor_plugs_in_without_changing_the_http_surface():
 
 def test_composition_reads_its_limits_from_the_environment(monkeypatch):
     monkeypatch.setenv("SERVING_MAX_POINTS", "4")
+    monkeypatch.setenv("SERVING_MAX_CELLS", "11")
     client = TestClient(compose.build_app(fixtures.builder()))
 
-    assert client.get("/api/v1/capabilities").json()["executor"][
-        "maximum_points"] == 4
+    executor = client.get("/api/v1/capabilities").json()["executor"]
+    assert executor["maximum_points"] == 4
+    assert executor["maximum_cells"] == 11
     monkeypatch.setenv("SERVING_MAX_POINTS", "many")
     with pytest.raises(ValueError, match="SERVING_MAX_POINTS"):
         compose.build_app(fixtures.builder())

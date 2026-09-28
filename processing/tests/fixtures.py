@@ -73,6 +73,7 @@ def builder(versions: Mapping[str, xr.Dataset] | None = None) -> ProductBuilder:
                 "not available")
         return prepare_sampled_scalar_point_field(
             dataset, descriptor(product_request.dataset_version_id),
-            product_request.selection, product_request.sampling)
+            product_request.selection, product_request.sampling,
+            maximum_cells=product_request.maximum_cells)
 
     return build

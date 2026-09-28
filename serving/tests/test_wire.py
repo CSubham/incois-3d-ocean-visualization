@@ -14,8 +14,9 @@ from serving import wire
 
 def _product(dataset=None, maximum_points: int = 5):
     versions = {fixtures.VERSION: dataset} if dataset is not None else None
-    return LocalExecutor(fixtures.builder(versions), maximum_points=100
-                         ).submit(fixtures.request(maximum_points)).product
+    executor = LocalExecutor(fixtures.builder(versions), maximum_points=100,
+                             maximum_cells=1000)
+    return executor.submit(fixtures.request(maximum_points)).product
 
 
 def test_every_array_round_trips_exactly_with_its_source_dtype():

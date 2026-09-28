@@ -83,6 +83,15 @@ class RequestCoordinator:
         return self._executor.capabilities
 
     def request_point_field(self, intent: PointFieldIntent) -> ProductJob:
+        """Submit a request under the effective point budget.
+
+        ``intent.maximum_points`` is what the client can display, or its
+        retry budget after a resource fallback. The effective budget is the
+        smaller of that and the server ceiling; a reduction is recorded on the
+        request rather than refused, so the client can disclose it.
+        """
+        ceiling = self._executor.capabilities.maximum_points
+        effective = min(intent.maximum_points, ceiling)
         try:
             request = ProductRequest(
                 dataset_version_id=intent.dataset_version_id,
@@ -95,7 +104,8 @@ class RequestCoordinator:
                     depth=DepthBounds(minimum=intent.depth_minimum,
                                       maximum=intent.depth_maximum),
                 ),
-                sampling=SamplingRequest(maximum_points=intent.maximum_points),
+                sampling=SamplingRequest(maximum_points=effective),
+                requested_maximum_points=intent.maximum_points,
             )
             return self._executor.submit(request)
         except InvalidRequestError as exc:

@@ -35,6 +35,10 @@ class PointBudgetError(InvalidRequestError):
     """The requested point budget cannot be applied."""
 
 
+class WorkLimitError(ProcessingError):
+    """The request is valid but selects more cells than this server builds."""
+
+
 class ManagedDataUnavailableError(ProcessingError):
     """The managed dataset version or variable could not be read.
 

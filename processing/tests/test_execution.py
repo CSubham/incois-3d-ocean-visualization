@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 import pytest
 
@@ -10,13 +11,14 @@ from processing import (
     AllMissingSubsetError, EmptySubsetError, GridValidationError,
     InvalidRequestError, JobState, LocalExecutor, ManagedDataUnavailableError,
     PointBudgetError, ProductRequest, TimeSelectionError, UnknownRequestError,
-    VariableSelectionError,
+    VariableSelectionError, WorkLimitError,
 )
 from processing.tests import fixtures
 
 
 def test_a_bounded_request_is_built_before_submit_returns():
-    job = LocalExecutor(fixtures.builder(), maximum_points=100).submit(
+    job = LocalExecutor(fixtures.builder(), maximum_points=100,
+                        maximum_cells=1000).submit(
         fixtures.request(maximum_points=5))
 
     assert job.state is JobState.SUCCEEDED
@@ -26,19 +28,22 @@ def test_a_bounded_request_is_built_before_submit_returns():
     assert job.submitted_at <= job.finished_at
 
 
-def test_the_builder_receives_the_request_unchanged():
+def test_the_builder_receives_the_request_with_the_work_ceiling_applied():
     seen = []
     executor = LocalExecutor(lambda request: seen.append(request) or
-                             fixtures.builder()(request), maximum_points=100)
+                             fixtures.builder()(request),
+                             maximum_points=100, maximum_cells=1000)
     submitted = fixtures.request()
 
-    executor.submit(submitted)
+    job = executor.submit(submitted)
 
-    assert seen == [submitted]
+    assert seen == [replace(submitted, maximum_cells=1000)]
+    assert job.request.maximum_cells == 1000
 
 
 def test_a_finished_job_can_be_read_back_by_its_identity():
-    executor = LocalExecutor(fixtures.builder(), maximum_points=100)
+    executor = LocalExecutor(fixtures.builder(), maximum_points=100,
+                             maximum_cells=1000)
     job = executor.submit(fixtures.request())
 
     assert executor.job(job.request_id) == job
@@ -53,12 +58,14 @@ def test_a_finished_job_can_be_read_back_by_its_identity():
     (EmptySubsetError("x"), "empty_subset"),
     (AllMissingSubsetError("x"), "all_missing"),
     (ManagedDataUnavailableError("x"), "data_unavailable"),
+    (WorkLimitError("x"), "work_limit"),
 ])
 def test_each_processing_failure_becomes_a_stable_code(error, code):
     def fail(_request):
         raise error
 
-    job = LocalExecutor(fail, maximum_points=100).submit(fixtures.request())
+    job = LocalExecutor(fail, maximum_points=100,
+                        maximum_cells=1000).submit(fixtures.request())
 
     assert job.state is JobState.FAILED
     assert job.failure.code == code
@@ -71,7 +78,8 @@ def test_an_unexpected_failure_is_logged_but_not_leaked(caplog):
         raise RuntimeError("password=hunter2 at /srv/objects/secret.nc")
 
     with caplog.at_level(logging.ERROR, logger="processing.execution"):
-        job = LocalExecutor(fail, maximum_points=100).submit(fixtures.request())
+        job = LocalExecutor(fail, maximum_points=100,
+                            maximum_cells=1000).submit(fixtures.request())
 
     assert job.failure.code == "internal_error"
     assert "hunter2" not in job.failure.message
@@ -82,7 +90,7 @@ def test_an_unexpected_failure_is_logged_but_not_leaked(caplog):
 def test_a_request_over_the_executor_limit_is_refused_before_any_work():
     calls = []
     executor = LocalExecutor(lambda request: calls.append(request),
-                             maximum_points=4)
+                             maximum_points=4, maximum_cells=1000)
 
     with pytest.raises(PointBudgetError, match="limit of 4"):
         executor.submit(fixtures.request(maximum_points=5))
@@ -91,12 +99,13 @@ def test_a_request_over_the_executor_limit_is_refused_before_any_work():
 
 def test_an_unknown_request_identity_is_a_typed_error():
     with pytest.raises(UnknownRequestError, match="nope"):
-        LocalExecutor(fixtures.builder(), maximum_points=10).job("nope")
+        LocalExecutor(fixtures.builder(), maximum_points=10,
+                      maximum_cells=1000).job("nope")
 
 
 def test_only_the_most_recent_jobs_are_retained():
     executor = LocalExecutor(fixtures.builder(), maximum_points=10,
-                             retained_jobs=2)
+                             maximum_cells=1000, retained_jobs=2)
     first, second, third = (executor.submit(fixtures.request())
                             for _ in range(3))
 
@@ -108,9 +117,11 @@ def test_only_the_most_recent_jobs_are_retained():
 
 def test_the_local_executor_declares_what_it_cannot_do():
     capabilities = LocalExecutor(fixtures.builder(),
-                                 maximum_points=7).capabilities
+                                 maximum_points=7,
+                                 maximum_cells=1000).capabilities
 
     assert capabilities.maximum_points == 7
+    assert capabilities.maximum_cells == 1000
     assert capabilities.asynchronous is False
     assert capabilities.cancellation is False
     assert capabilities.supersession is False
@@ -122,3 +133,44 @@ def test_a_request_must_name_a_dataset_version():
         ProductRequest(dataset_version_id=" ",
                        selection=fixtures.request().selection,
                        sampling=fixtures.request().sampling)
+
+
+def test_the_work_ceiling_refuses_an_oversized_selection():
+    job = LocalExecutor(fixtures.builder(), maximum_points=100,
+                        maximum_cells=11).submit(fixtures.request())
+
+    assert job.state is JobState.FAILED
+    assert job.failure.code == "work_limit"
+    assert "12 cells" in job.failure.message
+
+
+def test_a_request_may_ask_for_a_lower_work_ceiling_but_not_a_higher_one():
+    executor = LocalExecutor(fixtures.builder(), maximum_points=100,
+                             maximum_cells=50)
+
+    lower = executor.submit(replace(fixtures.request(), maximum_cells=20))
+    higher = executor.submit(replace(fixtures.request(), maximum_cells=10**9))
+
+    assert lower.request.maximum_cells == 20
+    assert higher.request.maximum_cells == 50
+
+
+def test_a_product_from_a_builder_that_ignored_the_ceiling_is_not_served():
+    def careless(request):
+        return fixtures.builder()(replace(request, maximum_cells=None))
+
+    job = LocalExecutor(careless, maximum_points=100,
+                        maximum_cells=11).submit(fixtures.request())
+
+    assert job.state is JobState.FAILED
+    assert job.failure.code == "work_limit"
+    assert job.product is None
+
+
+def test_an_effective_budget_cannot_exceed_the_requested_one():
+    with pytest.raises(InvalidRequestError, match="cannot exceed"):
+        replace(fixtures.request(maximum_points=5), requested_maximum_points=4)
+    reduced = replace(fixtures.request(maximum_points=5),
+                      requested_maximum_points=9)
+    assert reduced.budget_reduced is True
+    assert fixtures.request().budget_reduced is False
