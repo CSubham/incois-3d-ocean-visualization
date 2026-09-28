@@ -12,8 +12,13 @@ from processing.domain import (
 )
 from processing.errors import (
     AllMissingSubsetError, EmptySubsetError, GridValidationError,
-    InvalidRequestError, PointBudgetError, ProcessingError,
-    TimeSelectionError, VariableSelectionError,
+    InvalidRequestError, ManagedDataUnavailableError, PointBudgetError,
+    ProcessingError, TimeSelectionError, UnknownRequestError,
+    VariableSelectionError,
+)
+from processing.execution import (
+    ExecutorCapabilities, Failure, JobState, LocalExecutor, ProductBuilder,
+    ProductExecutor, ProductJob, ProductRequest, failure_for,
 )
 from processing.point_field import (
     build_sampled_scalar_point_field, prepare_sampled_scalar_point_field,
@@ -32,6 +37,9 @@ __all__ = [
     "SamplingRequest", "ScalarGridDescriptor", "ScalarPointFieldProduct",
     "ScalarSelection", "ScalarSubset", "SourceCellIndex",
     "SpatialReference", "TimeSelectionError", "VariableSelectionError",
+    "ExecutorCapabilities", "Failure", "JobState", "LocalExecutor",
+    "ManagedDataUnavailableError", "ProductBuilder", "ProductExecutor",
+    "ProductJob", "ProductRequest", "UnknownRequestError", "failure_for",
     "build_sampled_scalar_point_field", "prepare_sampled_scalar_point_field",
     "subset_scalar_field",
 ]

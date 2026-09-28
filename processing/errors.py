@@ -33,3 +33,15 @@ class AllMissingSubsetError(ProcessingError):
 
 class PointBudgetError(InvalidRequestError):
     """The requested point budget cannot be applied."""
+
+
+class ManagedDataUnavailableError(ProcessingError):
+    """The managed dataset version or variable could not be read.
+
+    Raised by the product builder bound at composition when the configured
+    storage read path cannot supply the input; the detail stays inside S3.
+    """
+
+
+class UnknownRequestError(ProcessingError):
+    """No request with this identity is known to the executor."""

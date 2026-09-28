@@ -1,0 +1,166 @@
+"""The HTTP surface translates; the coordinator and executor decide."""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from dataclasses import replace
+
+import numpy as np
+import pytest
+from fastapi.testclient import TestClient
+
+from processing import (
+    ExecutorCapabilities, JobState, LocalExecutor, ProductExecutor,
+    ProductJob, UnknownRequestError,
+)
+from processing.tests import fixtures
+from serving import compose, wire
+from serving.coordinator import RequestCoordinator
+from serving.http import create_app
+
+BODY = {
+    "dataset_version_id": fixtures.VERSION, "variable": "water_temp",
+    "time": "2026-01-02T00:00:00Z", "west": 65.0, "east": 90.0,
+    "south": -1.0, "north": 10.0, "depth_minimum": 5.0,
+    "depth_maximum": 20.0, "maximum_points": 5,
+}
+
+
+@pytest.fixture()
+def client() -> TestClient:
+    executor = LocalExecutor(fixtures.builder(), maximum_points=100)
+    return TestClient(create_app(RequestCoordinator(executor)))
+
+
+def test_health_and_capabilities(client):
+    assert client.get("/health").json() == {"status": "ok", "stage": "S5"}
+    capabilities = client.get("/api/v1/capabilities").json()
+    assert capabilities["wire_format"] == wire.WIRE_FORMAT
+    assert capabilities["executor"]["maximum_points"] == 100
+    assert capabilities["executor"]["cancellation"] is False
+
+
+def test_a_product_is_requested_described_and_fetched_as_binary(client):
+    accepted = client.post("/api/v1/point-fields", json=BODY)
+    assert accepted.status_code == 202
+    view = accepted.json()
+    assert accepted.headers["location"] == view["links"]["self"]
+    assert view["state"] == "succeeded" and view["finished"] is True
+
+    status = client.get(view["links"]["self"]).json()
+    described = status["product"]
+    assert described["point_count"] == 5
+
+    data = client.get(described["data"]["url"])
+    assert data.status_code == 200
+    assert data.headers["content-type"] == wire.MEDIA_TYPE
+    assert len(data.content) == described["data"]["byte_length"]
+    arrays = wire.decode(described["data"]["arrays"], data.content)
+    expected = LocalExecutor(fixtures.builder(), maximum_points=100).submit(
+        fixtures.request(5)).product
+    np.testing.assert_array_equal(arrays["values"], expected.points.values)
+
+
+@pytest.mark.parametrize("field, value, code", [
+    ("time", "yesterday", "invalid_request"),
+    ("time", "2026-01-02T00:00:00+05:30", "invalid_request"),
+    ("west", 170.0, "invalid_request"),
+    ("maximum_points", 0, "point_budget"),
+    ("maximum_points", 101, "point_budget"),
+])
+def test_invalid_requests_are_rejected_with_a_code(client, field, value, code):
+    response = client.post("/api/v1/point-fields", json={**BODY, field: value})
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == code
+
+
+def test_unexpected_fields_are_refused(client):
+    response = client.post("/api/v1/point-fields",
+                           json={**BODY, "renderer": "three"})
+    assert response.status_code == 422
+
+
+def test_a_failed_build_is_reported_as_state_and_has_no_data(client):
+    view = client.post("/api/v1/point-fields",
+                       json={**BODY, "dataset_version_id": "import-404"}).json()
+
+    assert view["state"] == "failed"
+    assert view["failure"]["code"] == "data_unavailable"
+    assert view["product"] is None
+    data = client.get(view["links"]["data"])
+    assert data.status_code == 409
+    assert data.json()["detail"]["state"] == "failed"
+
+
+def test_unknown_requests_are_not_found(client):
+    assert client.get("/api/v1/point-fields/nope").status_code == 404
+    assert client.get("/api/v1/point-fields/nope/data").status_code == 404
+
+
+class QueuedExecutor(ProductExecutor):
+    """A stand-in for a worker executor: accepts now, builds later."""
+
+    def __init__(self) -> None:
+        self.jobs: dict[str, ProductJob] = {}
+
+    @property
+    def capabilities(self) -> ExecutorCapabilities:
+        return ExecutorCapabilities(maximum_points=10, asynchronous=True,
+                                    cancellation=True, supersession=True,
+                                    status_shared_across_instances=True)
+
+    def submit(self, request):
+        job = ProductJob(request_id=f"q{len(self.jobs)}", request=request,
+                         state=JobState.ACCEPTED, submitted_at="t0")
+        self.jobs[job.request_id] = job
+        return job
+
+    def job(self, request_id):
+        if request_id not in self.jobs:
+            raise UnknownRequestError(request_id)
+        return self.jobs[request_id]
+
+    def finish(self, request_id):
+        job = self.jobs[request_id]
+        self.jobs[request_id] = replace(
+            job, state=JobState.SUCCEEDED, finished_at="t1",
+            product=fixtures.builder()(job.request))
+
+
+def test_another_executor_plugs_in_without_changing_the_http_surface():
+    executor = QueuedExecutor()
+    client = TestClient(create_app(RequestCoordinator(executor)))
+
+    view = client.post("/api/v1/point-fields", json=BODY).json()
+    assert view["state"] == "accepted" and view["finished"] is False
+    early = client.get(view["links"]["data"])
+    assert early.status_code == 409
+    assert early.json()["detail"]["state"] == "accepted"
+
+    executor.finish(view["request_id"])
+    assert client.get(view["links"]["data"]).status_code == 200
+    assert client.get("/api/v1/capabilities").json()["executor"][
+        "asynchronous"] is True
+
+
+def test_composition_reads_its_limits_from_the_environment(monkeypatch):
+    monkeypatch.setenv("SERVING_MAX_POINTS", "4")
+    client = TestClient(compose.build_app(fixtures.builder()))
+
+    assert client.get("/api/v1/capabilities").json()["executor"][
+        "maximum_points"] == 4
+    monkeypatch.setenv("SERVING_MAX_POINTS", "many")
+    with pytest.raises(ValueError, match="SERVING_MAX_POINTS"):
+        compose.build_app(fixtures.builder())
+
+
+def test_serving_loads_no_storage_driver_or_ingestion_code():
+    probe = ("import sys, serving.compose; "
+             "bad = sorted(m for m in sys.modules if m == 'psycopg' "
+             "or m.startswith(('psycopg.', 'ingestion'))); print(bad)")
+    result = subprocess.run([sys.executable, "-c", probe], check=True,
+                            capture_output=True, text=True)
+
+    assert result.stdout.strip() == "[]"
