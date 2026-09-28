@@ -27,5 +27,9 @@ class EmptySubsetError(ProcessingError):
     """Valid bounds selected no source coordinate cells."""
 
 
+class AllMissingSubsetError(ProcessingError):
+    """The selected cells exist but none holds a valid value."""
+
+
 class PointBudgetError(InvalidRequestError):
     """The requested point budget cannot be applied."""

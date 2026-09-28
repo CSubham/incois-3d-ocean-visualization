@@ -48,6 +48,16 @@ def _numeric_spatial_values(coordinate: xr.DataArray,
     return values
 
 
+def _declared(coordinate: xr.DataArray, name: str) -> str | None:
+    """A source-declared attribute, wherever CF decoding left it.
+
+    Decoding moves ``units`` and ``calendar`` of a time coordinate from its
+    attributes into its encoding.
+    """
+    value = coordinate.attrs.get(name, coordinate.encoding.get(name))
+    return None if value is None else str(value)
+
+
 def _time_indices(values: np.ndarray, requested: Any) -> np.ndarray:
     target = requested
     if np.issubdtype(values.dtype, np.datetime64):
@@ -98,6 +108,15 @@ def subset_scalar_field(dataset: xr.Dataset,
         raise GridValidationError(
             "time, depth, latitude and longitude must span distinct dimensions "
             "for an unambiguous rectilinear grid")
+
+    declared_positive = descriptor.spatial_reference.vertical_positive
+    source_positive = depth.attrs.get("positive")
+    if (source_positive is not None
+            and str(source_positive).strip().lower() != declared_positive):
+        raise GridValidationError(
+            f"depth coordinate {roles.depth!r} declares positive "
+            f"{source_positive!r}, contradicting the declared vertical "
+            f"direction {declared_positive!r}")
 
     depth_values = _numeric_spatial_values(depth, "depth")
     latitude_values = _numeric_spatial_values(latitude, "latitude")
@@ -170,16 +189,14 @@ def subset_scalar_field(dataset: xr.Dataset,
     missing_mask |= np.asarray(ordered.isnull().values, dtype=bool)
 
     selected_time = np.asarray(time_values[time_index]).copy()[()]
-    coordinate_units = {
-        "time": time.attrs.get("units"),
-        "depth": depth.attrs.get("units"),
-        "latitude": latitude.attrs.get("units"),
-        "longitude": longitude.attrs.get("units"),
-    }
+    coordinates = {"time": time, "depth": depth,
+                   "latitude": latitude, "longitude": longitude}
+    coordinate_units = {role: _declared(coordinate, "units")
+                        for role, coordinate in coordinates.items()}
     return ScalarSubset(
         identity=ProductIdentity(
             dataset_id=descriptor.identity.dataset_id,
-            dataset_version=descriptor.identity.version,
+            dataset_version_id=descriptor.identity.dataset_version_id,
             variable=variable_name,
             time_coordinate=roles.time,
             time_value=selected_time,
@@ -188,7 +205,12 @@ def subset_scalar_field(dataset: xr.Dataset,
             names=roles,
             dimensions=coordinate_dimensions,
             units=coordinate_units,
+            dtypes={role: str(coordinate.dtype)
+                    for role, coordinate in coordinates.items()},
+            time_encoding={"units": _declared(time, "units"),
+                           "calendar": _declared(time, "calendar")},
         ),
+        spatial_reference=descriptor.spatial_reference,
         source_dimensions=tuple(str(dim) for dim in variable.dims),
         semantic_dimensions=(coordinate_dimensions["depth"],
                              coordinate_dimensions["latitude"],

@@ -15,20 +15,42 @@ from processing.errors import InvalidRequestError, PointBudgetError
 PRODUCT_SCHEMA_VERSION = "s4.sampled-scalar-point-field/1.0"
 PRODUCT_TYPE = "sampled_scalar_point_field"
 SAMPLING_POLICY = "evenly-spaced-flat-index-v1"
+VERTICAL_POSITIVE = ("down", "up")
 
 
 def _frozen_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
-    def freeze(item: Any) -> Any:
-        if isinstance(item, Mapping):
-            return MappingProxyType({str(k): freeze(v)
-                                     for k, v in item.items()})
-        if isinstance(item, (list, tuple)):
-            return tuple(freeze(v) for v in item)
-        if isinstance(item, set):
-            return frozenset(freeze(v) for v in item)
-        return item
+    """A deep, read-only copy restricted to JSON-compatible values.
 
-    return freeze(dict(value))
+    Anything else could be mutated behind the product's back or would not
+    survive a cross-process binding, so it is refused rather than carried.
+    """
+    def freeze(item: Any, path: str) -> Any:
+        if isinstance(item, Mapping):
+            frozen = {}
+            for key, child in item.items():
+                if not isinstance(key, str):
+                    raise InvalidRequestError(
+                        f"{path} has a non-text key {key!r}")
+                frozen[key] = freeze(child, f"{path}.{key}")
+            return MappingProxyType(frozen)
+        if isinstance(item, (list, tuple)):
+            return tuple(freeze(child, f"{path}[{position}]")
+                         for position, child in enumerate(item))
+        if isinstance(item, np.generic) and not isinstance(
+                item, (np.datetime64, np.timedelta64)):
+            item = item.item()
+        if item is None or isinstance(item, (str, bool, int)):
+            return item
+        if isinstance(item, float):
+            if not isfinite(item):
+                raise InvalidRequestError(
+                    f"{path} is {item!r}, which has no JSON representation")
+            return item
+        raise InvalidRequestError(
+            f"{path} holds a {type(item).__name__}; only text, numbers, "
+            "booleans, null, lists and mappings are carried")
+
+    return freeze(dict(value), "metadata")
 
 
 def _readonly_array(value: np.ndarray) -> np.ndarray:
@@ -59,15 +81,44 @@ class CoordinateRoles:
 
 @dataclass(frozen=True)
 class DatasetIdentity:
-    """Stable identity of the managed dataset version being processed."""
+    """Stable identity of the managed dataset version being processed.
+
+    ``dataset_version_id`` is the immutable reference S3 hands out for one
+    stored version, not a free-form label: two products with the same value
+    were built from the same stored array.
+    """
 
     dataset_id: str
-    version: str
+    dataset_version_id: str
 
     def __post_init__(self) -> None:
-        if not self.dataset_id or not self.version:
+        for name in ("dataset_id", "dataset_version_id"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise InvalidRequestError(
+                    f"{name} is required for an auditable product")
+
+
+@dataclass(frozen=True)
+class SpatialReference:
+    """Declared horizontal and vertical reference of the source grid.
+
+    Supplied with the grid rather than guessed from coordinate names or
+    values. Sample data uses more than one vertical convention, so the
+    direction of increasing depth is never assumed.
+    """
+
+    crs: str
+    vertical_positive: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.crs, str) or not self.crs.strip():
             raise InvalidRequestError(
-                "dataset_id and version are required for an auditable product")
+                "a coordinate reference system must be declared")
+        if self.vertical_positive not in VERTICAL_POSITIVE:
+            raise InvalidRequestError(
+                f"vertical_positive must be one of {VERTICAL_POSITIVE}, "
+                f"not {self.vertical_positive!r}")
 
 
 @dataclass(frozen=True)
@@ -76,6 +127,7 @@ class ScalarGridDescriptor:
 
     identity: DatasetIdentity
     coordinates: CoordinateRoles
+    spatial_reference: SpatialReference
     provenance: Mapping[str, Any]
 
     def __post_init__(self) -> None:
@@ -83,6 +135,12 @@ class ScalarGridDescriptor:
             raise InvalidRequestError("provenance must be a mapping")
         object.__setattr__(self, "provenance",
                            _frozen_mapping(self.provenance))
+        recorded = self.provenance.get("import_id")
+        if (recorded is not None
+                and recorded != self.identity.dataset_version_id):
+            raise InvalidRequestError(
+                f"provenance import_id {recorded!r} contradicts "
+                f"dataset_version_id {self.identity.dataset_version_id!r}")
 
 
 @dataclass(frozen=True)
@@ -160,7 +218,7 @@ class SamplingRequest:
 @dataclass(frozen=True)
 class ProductIdentity:
     dataset_id: str
-    dataset_version: str
+    dataset_version_id: str
     variable: str
     time_coordinate: str
     time_value: Any
@@ -168,14 +226,57 @@ class ProductIdentity:
 
 @dataclass(frozen=True)
 class CoordinateMetadata:
+    """Coordinate names, dimensions, units, storage types and time encoding.
+
+    ``time_encoding`` holds the source's declared ``units`` and ``calendar``;
+    a value of None means the source did not declare it, not that a default
+    was assumed.
+    """
+
     names: CoordinateRoles
     dimensions: Mapping[str, str]
     units: Mapping[str, str | None]
+    dtypes: Mapping[str, str]
+    time_encoding: Mapping[str, str | None]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "dimensions",
-                           _frozen_mapping(self.dimensions))
-        object.__setattr__(self, "units", _frozen_mapping(self.units))
+        for name in ("dimensions", "units", "dtypes", "time_encoding"):
+            object.__setattr__(self, name, _frozen_mapping(getattr(self, name)))
+
+
+@dataclass(frozen=True)
+class CoordinateTransform:
+    """What was done to source coordinates before delivery."""
+
+    kind: str
+    horizontal: str
+    vertical: str
+
+
+IDENTITY_TRANSFORM = CoordinateTransform(
+    kind="identity",
+    horizontal="source longitude and latitude values in the declared CRS; "
+               "not reprojected and not re-wrapped",
+    vertical="source depth values in source units and the declared positive "
+             "direction; no exaggeration applied",
+)
+
+
+@dataclass(frozen=True)
+class MaskSemantics:
+    """How to read ``missing_value_mask`` and the values it covers."""
+
+    true_means: str
+    sources: tuple[str, ...]
+    masked_values: str
+
+
+MISSING_VALUE_MASK = MaskSemantics(
+    true_means="the source cell has no valid value",
+    sources=("NaN after CF decoding", "masked array element"),
+    masked_values="not scientific values; consumers must apply the mask and "
+                  "exclude them from display and ranges",
+)
 
 
 @dataclass(frozen=True)
@@ -207,11 +308,20 @@ class SourceCellIndex:
 
 @dataclass(frozen=True)
 class SamplingMetadata:
+    """The sampling applied, with cell and valid-value counts kept apart.
+
+    ``original_point_count`` and ``delivered_point_count`` count cells,
+    masked or not; the ``*_valid_point_count`` fields count only cells with
+    a valid value.
+    """
+
     policy: str
     parameters: Mapping[str, Any]
     maximum_points: int
     original_point_count: int
+    original_valid_point_count: int
     delivered_point_count: int
+    delivered_valid_point_count: int
     omitted_point_count: int
     is_lossy: bool
     selected_subset_flat_indices: tuple[int, ...]
@@ -251,6 +361,7 @@ class ScalarSubset:
 
     identity: ProductIdentity
     coordinates: CoordinateMetadata
+    spatial_reference: SpatialReference
     source_dimensions: tuple[str, ...]
     semantic_dimensions: tuple[str, str, str]
     variable_units: str
@@ -287,6 +398,7 @@ class ScalarPointFieldProduct:
 
     identity: ProductIdentity
     coordinates: CoordinateMetadata
+    spatial_reference: SpatialReference
     dimensions: DimensionMetadata
     variable_units: str
     source_dtype: str
@@ -295,6 +407,8 @@ class ScalarPointFieldProduct:
     full_subset_range: PhysicalRange
     delivered_sample_range: PhysicalRange
     points: PointFieldData
+    coordinate_transform: CoordinateTransform = IDENTITY_TRANSFORM
+    mask_semantics: MaskSemantics = MISSING_VALUE_MASK
     schema_version: str = field(default=PRODUCT_SCHEMA_VERSION, init=False)
     product_type: str = field(default=PRODUCT_TYPE, init=False)
 

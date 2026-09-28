@@ -9,6 +9,7 @@ from processing.domain import (
     SamplingRequest, ScalarGridDescriptor, ScalarPointFieldProduct,
     ScalarSelection, ScalarSubset, SourceCellIndex,
 )
+from processing.errors import AllMissingSubsetError
 from processing.subsetter import subset_scalar_field
 
 
@@ -44,6 +45,13 @@ def build_sampled_scalar_point_field(
         subset: ScalarSubset,
         sampling: SamplingRequest) -> ScalarPointFieldProduct:
     """Build an auditable budget-limited product without inventing values."""
+    full_range = _physical_range(subset.values, subset.missing_value_mask)
+    if full_range.valid_point_count == 0:
+        raise AllMissingSubsetError(
+            f"all {full_range.missing_point_count} selected cells of "
+            f"{subset.identity.variable!r} are missing; there is no value to "
+            "display")
+
     original_count = int(subset.values.size)
     selected_flat = _selected_flat_indices(
         original_count, sampling.maximum_points)
@@ -71,10 +79,12 @@ def build_sampled_scalar_point_field(
     )
     delivered_count = len(selected_flat)
     omitted_count = original_count - delivered_count
+    delivered_range = _physical_range(delivered_values, delivered_mask)
 
     return ScalarPointFieldProduct(
         identity=subset.identity,
         coordinates=subset.coordinates,
+        spatial_reference=subset.spatial_reference,
         dimensions=DimensionMetadata(
             source_order=subset.source_dimensions,
             semantic_order=subset.semantic_dimensions,
@@ -86,21 +96,26 @@ def build_sampled_scalar_point_field(
         sampling=SamplingMetadata(
             policy=sampling.policy,
             parameters={
+                "basis": "index space: positions in the subset array, not "
+                         "physical distance, so uneven depth levels are "
+                         "sampled by level rather than by metre",
                 "traversal": "C-order over (depth, latitude, longitude)",
                 "multiple_points": "integer-even spacing including endpoints",
                 "single_point": "lower central flat index",
+                "masked_cells_eligible": True,
+                "masked_cells_delivered": "with missing_value_mask true",
             },
             maximum_points=sampling.maximum_points,
             original_point_count=original_count,
+            original_valid_point_count=full_range.valid_point_count,
             delivered_point_count=delivered_count,
+            delivered_valid_point_count=delivered_range.valid_point_count,
             omitted_point_count=omitted_count,
             is_lossy=omitted_count > 0,
             selected_subset_flat_indices=selected_flat,
         ),
-        full_subset_range=_physical_range(
-            subset.values, subset.missing_value_mask),
-        delivered_sample_range=_physical_range(
-            delivered_values, delivered_mask),
+        full_subset_range=full_range,
+        delivered_sample_range=delivered_range,
         points=PointFieldData(
             longitude=delivered_longitude,
             latitude=delivered_latitude,

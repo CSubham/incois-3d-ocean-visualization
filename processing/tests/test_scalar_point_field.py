@@ -9,11 +9,12 @@ import pytest
 import xarray as xr
 
 from processing import (
-    PRODUCT_SCHEMA_VERSION, SAMPLING_POLICY, CoordinateRoles,
+    IDENTITY_TRANSFORM, MISSING_VALUE_MASK, PRODUCT_SCHEMA_VERSION,
+    SAMPLING_POLICY, AllMissingSubsetError, CoordinateRoles,
     DatasetIdentity, DepthBounds, EmptySubsetError, GeographicBounds,
     GridValidationError, InvalidRequestError, PointBudgetError,
     SamplingRequest, ScalarGridDescriptor, ScalarSelection,
-    TimeSelectionError, VariableSelectionError,
+    SpatialReference, TimeSelectionError, VariableSelectionError,
     prepare_sampled_scalar_point_field, subset_scalar_field,
 )
 
@@ -47,13 +48,16 @@ def _dataset() -> xr.Dataset:
     )
 
 
-def _descriptor() -> ScalarGridDescriptor:
+def _descriptor(provenance: dict | None = None,
+                vertical_positive: str = "down") -> ScalarGridDescriptor:
     return ScalarGridDescriptor(
         identity=DatasetIdentity(dataset_id="hycom-glby008",
-                                 version="2026-01-02T00:00:00Z"),
+                                 dataset_version_id="import-123"),
         coordinates=CoordinateRoles(
             time="time", depth="depth", latitude="lat", longitude="lon"),
-        provenance={
+        spatial_reference=SpatialReference(
+            crs="EPSG:4326", vertical_positive=vertical_positive),
+        provenance=provenance if provenance is not None else {
             "source": "fixture://decoded-grid",
             "import_id": "import-123",
             "steps": ["decoded", "validated"],
@@ -234,7 +238,7 @@ def test_units_dimensions_identity_provenance_and_schema_are_preserved():
     assert product.variable_units == "degree_Celsius"
     assert product.source_dtype == "float32"
     assert product.identity.dataset_id == "hycom-glby008"
-    assert product.identity.dataset_version == "2026-01-02T00:00:00Z"
+    assert product.identity.dataset_version_id == "import-123"
     assert product.dimensions.source_order == ("time", "depth", "lat", "lon")
     assert product.dimensions.semantic_order == ("depth", "lat", "lon")
     assert product.coordinates.units["depth"] == "m"
@@ -335,3 +339,96 @@ def test_product_arrays_are_read_only_snapshots():
 
     with pytest.raises(ValueError, match="read-only"):
         product.points.values[0] = 100.0
+
+
+def test_envelope_declares_reference_transform_mask_and_time_encoding():
+    dataset = _dataset()
+    dataset["time"].encoding.update(
+        {"units": "hours since 2000-01-01 00:00:00", "calendar": "gregorian"})
+
+    product = _product(dataset)
+
+    assert product.spatial_reference == SpatialReference(
+        crs="EPSG:4326", vertical_positive="down")
+    assert product.coordinate_transform == IDENTITY_TRANSFORM
+    assert product.mask_semantics == MISSING_VALUE_MASK
+    assert product.coordinates.time_encoding["units"] == \
+        "hours since 2000-01-01 00:00:00"
+    assert product.coordinates.time_encoding["calendar"] == "gregorian"
+    assert product.coordinates.dtypes["time"] == "datetime64[ns]"
+    assert product.coordinates.dtypes["depth"] == "float64"
+
+
+def test_undeclared_time_encoding_is_recorded_as_absent_not_defaulted():
+    product = _product()
+
+    assert product.coordinates.time_encoding["calendar"] is None
+    assert product.coordinates.time_encoding["units"] is None
+
+
+def test_source_vertical_direction_must_agree_with_the_declared_one():
+    dataset = _dataset()
+    dataset["depth"].attrs["positive"] = "down"
+    assert _product(dataset).spatial_reference.vertical_positive == "down"
+
+    with pytest.raises(GridValidationError, match="contradicting"):
+        subset_scalar_field(dataset, _descriptor(vertical_positive="up"),
+                            _selection())
+
+
+def test_spatial_reference_must_be_declared_explicitly():
+    with pytest.raises(InvalidRequestError, match="coordinate reference"):
+        SpatialReference(crs="", vertical_positive="down")
+    with pytest.raises(InvalidRequestError, match="vertical_positive"):
+        SpatialReference(crs="EPSG:4326", vertical_positive="depth")
+
+
+def test_sampling_declares_its_basis_and_counts_cells_and_valid_values_apart():
+    dataset = _dataset()
+    values = dataset["water_temp"].values.copy()
+    values[1, 1, 1, 1] = np.nan   # subset flat index 0, which is sampled
+    values[1, 1, 1, 2] = np.nan   # subset flat index 1, which is not
+    dataset["water_temp"].values = values
+
+    product = _product(dataset, maximum_points=5)
+
+    assert product.sampling.parameters["basis"].startswith("index space")
+    assert product.sampling.parameters["masked_cells_eligible"] is True
+    assert product.sampling.original_point_count == 12
+    assert product.sampling.original_valid_point_count == 10
+    assert product.sampling.delivered_point_count == 5
+    assert product.sampling.delivered_valid_point_count == 4
+
+
+def test_an_all_missing_subset_is_a_typed_failure_not_an_empty_product():
+    dataset = _dataset()
+    dataset["water_temp"].values = np.full(
+        dataset["water_temp"].shape, np.nan, dtype=np.float32)
+
+    with pytest.raises(AllMissingSubsetError, match="all 12 selected cells"):
+        _product(dataset)
+
+
+def test_dataset_version_is_explicit_and_provenance_cannot_contradict_it():
+    with pytest.raises(InvalidRequestError, match="dataset_version_id"):
+        DatasetIdentity(dataset_id="hycom-glby008", dataset_version_id=" ")
+    with pytest.raises(InvalidRequestError, match="contradicts"):
+        _descriptor(provenance={"import_id": "import-999"})
+
+
+def test_provenance_is_a_json_compatible_deep_copy():
+    source = {"steps": ["decoded"], "detail": {"levels": np.int64(40)}}
+    descriptor = _descriptor(provenance=source)
+    source["steps"].append("tampered")
+    source["detail"]["levels"] = 0
+
+    assert descriptor.provenance["steps"] == ("decoded",)
+    assert descriptor.provenance["detail"]["levels"] == 40
+    assert type(descriptor.provenance["detail"]["levels"]) is int
+
+
+@pytest.mark.parametrize("leaf", [{"a", "b"}, bytearray(b"x"), object(),
+                                  float("nan")])
+def test_provenance_refuses_values_that_are_mutable_or_not_json(leaf):
+    with pytest.raises(InvalidRequestError, match="metadata.bad"):
+        _descriptor(provenance={"bad": leaf})
