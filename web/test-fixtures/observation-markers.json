@@ -1,0 +1,233 @@
+{
+  "data": {
+    "arrays": [
+      {
+        "byte_length": 8,
+        "byte_offset": 0,
+        "count": 1,
+        "dtype": "<f8",
+        "name": "longitude",
+        "role": "longitude"
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 8,
+        "count": 1,
+        "dtype": "<f8",
+        "name": "latitude",
+        "role": "latitude"
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 16,
+        "count": 1,
+        "dtype": "<f8",
+        "name": "vertical_minimum",
+        "role": "vertical_range_minimum"
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 24,
+        "count": 1,
+        "dtype": "<f8",
+        "name": "vertical_maximum",
+        "role": "vertical_range_maximum"
+      },
+      {
+        "byte_length": 4,
+        "byte_offset": 32,
+        "count": 1,
+        "dtype": "<u4",
+        "name": "vertical_valid_count",
+        "role": "vertical_valid_observation_count"
+      },
+      {
+        "byte_length": 4,
+        "byte_offset": 40,
+        "count": 1,
+        "dtype": "<u4",
+        "name": "vertical_missing_count",
+        "role": "vertical_missing_observation_count"
+      },
+      {
+        "byte_length": 4,
+        "byte_offset": 48,
+        "count": 1,
+        "dtype": "<u4",
+        "name": "representative_source_index",
+        "role": "representative_source_index"
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 56,
+        "component": "offsets",
+        "count": 2,
+        "dtype": "<u4",
+        "encoding": "utf-8-offsets",
+        "name": "platform_id_offsets",
+        "role": "platform_identity",
+        "text_column": "platform_id",
+        "value_count": 1
+      },
+      {
+        "byte_length": 7,
+        "byte_offset": 64,
+        "component": "utf8",
+        "count": 7,
+        "dtype": "|u1",
+        "encoding": "utf-8-offsets",
+        "name": "platform_id_utf8",
+        "role": "platform_identity",
+        "text_column": "platform_id",
+        "value_count": 1
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 72,
+        "component": "offsets",
+        "count": 2,
+        "dtype": "<u4",
+        "encoding": "utf-8-offsets",
+        "name": "cycle_offsets",
+        "role": "cycle_profile_identity",
+        "text_column": "cycle",
+        "value_count": 1
+      },
+      {
+        "byte_length": 2,
+        "byte_offset": 80,
+        "component": "utf8",
+        "count": 2,
+        "dtype": "|u1",
+        "encoding": "utf-8-offsets",
+        "name": "cycle_utf8",
+        "role": "cycle_profile_identity",
+        "text_column": "cycle",
+        "value_count": 1
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 88,
+        "component": "offsets",
+        "count": 2,
+        "dtype": "<u4",
+        "encoding": "utf-8-offsets",
+        "name": "time_offsets",
+        "role": "timestamp",
+        "source_dtype": null,
+        "text_column": "time",
+        "value_count": 1
+      },
+      {
+        "byte_length": 29,
+        "byte_offset": 96,
+        "component": "utf8",
+        "count": 29,
+        "dtype": "|u1",
+        "encoding": "utf-8-offsets",
+        "name": "time_utf8",
+        "role": "timestamp",
+        "source_dtype": null,
+        "text_column": "time",
+        "value_count": 1
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 128,
+        "count": 2,
+        "dtype": "<u4",
+        "name": "marker_source_index_offsets",
+        "role": "marker_source_index_offsets",
+        "value_count": 1
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 136,
+        "count": 2,
+        "dtype": "<u4",
+        "name": "marker_source_index",
+        "role": "source_observation_index"
+      }
+    ],
+    "byte_length": 144,
+    "byte_order": "little",
+    "media_type": "application/octet-stream",
+    "url": "/data"
+  },
+  "observation_count": 1,
+  "product": {
+    "coordinate_transform": {
+      "horizontal": "longitude, latitude and marker time supplied by the S3 ProfileMarker contract; S4 does not average, reproject or re-wrap them",
+      "kind": "s3-observation-record",
+      "vertical": "source-order vertical values supplied by the S3 ObservationProfile contract; S4 does not convert, sort or interpolate them"
+    },
+    "coordinates": {
+      "dtypes": {
+        "cycle": null,
+        "latitude": null,
+        "longitude": null,
+        "platform": null,
+        "time": null,
+        "vertical": null
+      },
+      "names": {
+        "cycle": "cycle",
+        "latitude": "latitude",
+        "longitude": "longitude",
+        "platform": "platform_id",
+        "time": "time",
+        "vertical": "PRES"
+      },
+      "sample_dimension": "observation_record",
+      "time_encoding": {
+        "calendar": null,
+        "units": null
+      },
+      "units": {
+        "cycle": null,
+        "latitude": "degrees_north",
+        "longitude": "degrees_east",
+        "platform": null,
+        "time": null,
+        "vertical": "decibar"
+      },
+      "vertical_kind": "pressure"
+    },
+    "dataset_identity": {
+      "dataset_id": "Indian_ARGO_Floats",
+      "dataset_version_id": "profile-version-1"
+    },
+    "grouping": {
+      "delivered_marker_count": 1,
+      "grouping_keys": [
+        "platform_id",
+        "cycle"
+      ],
+      "original_observation_count": 2,
+      "representative_policy": "marker longitude, latitude and time are supplied by the S3 ProfileMarker record; source index zero anchors the companion S3 profile-record sequence and is not a coordinate reduction",
+      "skipped_profile_count": 0
+    },
+    "mask_semantics": {
+      "masked_values": "not scientific values; consumers must apply the mask",
+      "sources": [
+        "None in an S3 profile record",
+        "NaN in a numeric record value"
+      ],
+      "true_means": "the S3 observation record has no scientific value"
+    },
+    "product_type": "observation_markers",
+    "provenance": {
+      "import_id": "profile-version-1",
+      "source": {
+        "id": "incois_erddap"
+      }
+    },
+    "schema_version": "s4.observation-markers/1.0",
+    "skipped_profiles": [],
+    "spatial_reference": {
+      "crs": "EPSG:4326",
+      "vertical_positive": "down"
+    }
+  },
+  "wire_format": "s5.observation-wire/1.0"
+}

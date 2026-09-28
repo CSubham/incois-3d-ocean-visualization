@@ -72,6 +72,13 @@ describe("S7 state", () => {
     expect(s.hovered).toBeNull();
   });
 
+  it("leaves the field's budget alone when a marker is picked", () => {
+    const before = loaded();
+    const pick = { datasetVersionId: "v", platformId: "p", cycle: "1", longitude: 0, latitude: 0, observedAt: "t" };
+    const after = reducer(before, { type: "rendererEvent", event: { type: "pick", marker: pick } });
+    expect(after.selection).toEqual(before.selection);
+  });
+
   it("reports a failed request and an unsupported renderer", () => {
     const failed: RequestView = { ...succeeded(0, 1), state: "failed", product: null, failure: { code: "work_limit", message: "too big" } };
     expect(reducer(loaded(), { type: "requestFinished", view: failed }).request)

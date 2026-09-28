@@ -4,6 +4,7 @@
 // and receives events. No scene, material, texture or buffer object crosses
 // this boundary, so another engine replaces the implementation, not the UI.
 
+import type { MarkerSet } from "../api/observationWire";
 import type { PointFieldArrays, ProductDescriptor } from "../api/wire";
 
 export type PaletteName = "viridis" | "cividis" | "thermal";
@@ -31,8 +32,20 @@ export interface PointSample {
   value: number;
 }
 
+/** The exact profile a selected marker stands for, with where and when. */
+export interface MarkerPick {
+  datasetVersionId: string;
+  platformId: string;
+  cycle: string;
+  longitude: number;
+  latitude: number;
+  observedAt: string;
+}
+
 export type RendererEvent =
   | { type: "ready"; shownPoints: number; hiddenMissingPoints: number }
+  | { type: "markersReady"; count: number }
+  | { type: "pick"; marker: MarkerPick }
   | { type: "hover"; sample: PointSample | null }
   | { type: "unsupported"; reason: string }
   | { type: "resource"; reason: string; retryWithPoints: number }
@@ -45,6 +58,9 @@ export interface Renderer {
   mount(container: HTMLElement): void;
   showPointField(descriptor: ProductDescriptor, arrays: PointFieldArrays): void;
   clear(): void;
+  /** Observation markers at the sea surface; selecting one emits "pick". */
+  showMarkers(markers: MarkerSet): void;
+  clearMarkers(): void;
   applyDisplay(display: DisplayState): void;
   command(command: RendererCommand): void;
   onEvent(listener: (event: RendererEvent) => void): () => void;

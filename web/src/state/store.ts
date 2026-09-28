@@ -165,9 +165,13 @@ export function reducer(state: State, action: Action): State {
       if (event.type === "hover") return { ...state, hovered: event.sample };
       if (event.type === "unsupported") return { ...state, renderer: { phase: "unsupported", reason: event.reason } };
       if (event.type === "error") return { ...state, renderer: { phase: "error", reason: event.reason } };
-      // A resource event lowers the budget; the controller re-requests.
-      if (!state.selection) return state;
-      return { ...state, selection: { ...state.selection, maximumPoints: event.retryWithPoints } };
+      if (event.type === "resource") {
+        // Lower the budget; the controller re-requests.
+        if (!state.selection) return state;
+        return { ...state, selection: { ...state.selection, maximumPoints: event.retryWithPoints } };
+      }
+      // Marker events are handled by the observation workflow (phase 4).
+      return state;
     }
     case "setDisplay": {
       const patch = action.patch;

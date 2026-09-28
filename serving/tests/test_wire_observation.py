@@ -185,3 +185,32 @@ def test_s3_record_profile_uses_the_same_wire_format_with_absent_dtypes():
     assert variable["qc_flag_values"] == [1, 2]
     assert variable["qc_flag_meanings"] == "good_data bad_data"
     assert variable["qc_conventions"] == "fixture QC table 1"
+
+
+def test_the_browser_marker_fixture_matches_the_encoder():
+    """The browser marker decoder is tested against these files; regenerate
+    with WIRE_GOLDEN_UPDATE=1 only when the wire format changes on purpose."""
+    import json
+    import os
+    from pathlib import Path
+
+    from ingestion.query import ProfileSearch
+    from ingestion.tests.query_support import PROFILE_VERSION_ID, in_memory_case
+    from processing.managed import (
+        ManagedObservationMarkerRequest, managed_observation_marker_builder,
+    )
+
+    golden = Path(__file__).resolve().parents[2] / "web" / "test-fixtures"
+    product = managed_observation_marker_builder(in_memory_case().query)(
+        ManagedObservationMarkerRequest(PROFILE_VERSION_ID, ProfileSearch(
+            west=70, east=80, south=5, north=12,
+            time_start="2026-09-27T00:00:00Z", time_end="2026-09-29T00:00:00Z")))
+    descriptor = json.dumps(wire_observation.describe(product, data_url="/data"),
+                            indent=2, sort_keys=True) + "\n"
+    _, buffer = wire_observation.encode(product)
+    if os.environ.get("WIRE_GOLDEN_UPDATE") == "1":
+        (golden / "observation-markers.json").write_text(descriptor)
+        (golden / "observation-markers.bin").write_bytes(buffer)
+
+    assert (golden / "observation-markers.json").read_text() == descriptor
+    assert (golden / "observation-markers.bin").read_bytes() == buffer

@@ -17,15 +17,19 @@ import {
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 
+import type { MarkerSet } from "../../api/observationWire";
 import type { PointFieldArrays, ProductDescriptor } from "../../api/wire";
 import { logScaleProblem, normalise, paletteColour } from "../colour";
 import type {
   DisplayState, PointSample, Renderer, RendererCapabilities, RendererCommand,
   RendererEvent,
 } from "../contract";
+import { markerPick } from "../markers";
 import { sceneFrame, TransformError } from "../transform";
 
 const POINT_PIXELS = 4;
+const MARKER_PIXELS = 11;
+const MARKER_FILL = Color.fromCssColorString("#ffcf5a");
 const REGION_OUTLINE = Color.fromCssColorString("#9fd3ea").withAlpha(0.9);
 
 interface Layer {
@@ -51,6 +55,7 @@ export class CesiumRenderer implements Renderer {
   private layer?: Layer;
   private display?: DisplayState;
   private hovered: number | null = null;
+  private markers?: { collection: PointPrimitiveCollection; set: MarkerSet };
 
   constructor(maximumPoints: number) {
     this.capabilities = { engine: "CesiumJS on WebGL2", maximumPoints };
@@ -89,6 +94,8 @@ export class CesiumRenderer implements Renderer {
     this.handler = new ScreenSpaceEventHandler(scene.canvas);
     this.handler.setInputAction((movement: { endPosition: Cartesian2 }) => this.hover(movement.endPosition),
       ScreenSpaceEventType.MOUSE_MOVE);
+    this.handler.setInputAction((click: { position: Cartesian2 }) => this.select(click.position),
+      ScreenSpaceEventType.LEFT_CLICK);
     // Start over the northern Indian Ocean.
     this.viewer.camera.setView({ destination: Cartesian3.fromDegrees(78, 5, 9_000_000) });
   }
@@ -176,6 +183,37 @@ export class CesiumRenderer implements Renderer {
     viewer.scene.requestRender();
   }
 
+  showMarkers(set: MarkerSet): void {
+    const viewer = this.viewer;
+    if (!viewer) return;
+    this.clearMarkers();
+    const collection = viewer.scene.primitives.add(new PointPrimitiveCollection()) as PointPrimitiveCollection;
+    for (let i = 0; i < set.platformIds.length; i++) {
+      collection.add({
+        position: Cartesian3.fromDegrees(set.longitude[i], set.latitude[i], 0),
+        pixelSize: MARKER_PIXELS,
+        color: MARKER_FILL,
+        outlineColor: Color.WHITE,
+        outlineWidth: 2,
+        // Never hidden behind the globe or the field: a marker is a handle.
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        id: { marker: i },
+      });
+    }
+    this.markers = { collection, set };
+    viewer.scene.requestRender();
+    this.emit({ type: "markersReady", count: set.platformIds.length });
+  }
+
+  clearMarkers(): void {
+    const viewer = this.viewer;
+    if (!viewer || !this.markers) return;
+    viewer.scene.primitives.remove(this.markers.collection);   // releases GPU resources
+    this.markers = undefined;
+    viewer.scene.canvas.style.cursor = "";
+    viewer.scene.requestRender();
+  }
+
   applyDisplay(display: DisplayState): void {
     const previous = this.display;
     this.display = display;
@@ -219,6 +257,7 @@ export class CesiumRenderer implements Renderer {
   }
 
   dispose(): void {
+    this.clearMarkers();
     this.handler?.destroy();
     if (this.viewer && !this.viewer.isDestroyed()) this.viewer.destroy();
     this.viewer = undefined;
@@ -261,8 +300,25 @@ export class CesiumRenderer implements Renderer {
     });
   }
 
+  private markerIndexAt(position: Cartesian2): number | null {
+    const viewer = this.viewer;
+    const markers = this.markers;
+    if (!viewer || !markers) return null;
+    const picked = viewer.scene.pick(position);
+    const id = picked?.collection === markers.collection ? picked.id : null;
+    return id && typeof id.marker === "number" ? id.marker : null;
+  }
+
+  private select(position: Cartesian2): void {
+    const index = this.markerIndexAt(position);
+    if (index !== null && this.markers) {
+      this.emit({ type: "pick", marker: markerPick(this.markers.set, index) });
+    }
+  }
+
   private hover(position: Cartesian2): void {
     const viewer = this.viewer;
+    if (viewer) viewer.scene.canvas.style.cursor = this.markerIndexAt(position) !== null ? "pointer" : "";
     const layer = this.layer;
     if (!viewer || !layer) return;
     const picked = viewer.scene.pick(position);
