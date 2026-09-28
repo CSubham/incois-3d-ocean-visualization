@@ -10,7 +10,10 @@ from ingestion.domain.package import (
 from ingestion.domain.selection import ImportSelection
 from ingestion.domain.validation import ValidationResult
 from ingestion.storage.objects import LocalObjectStore, ObjectStoreError
-from ingestion.storage.postgres import _extent_of, _profiles_in, _signed
+from ingestion.storage.postgres import (
+    _catalogue_coordinate_values, _extent_of, _profiles_in, _signed,
+)
+from ingestion.tests.query_support import model_package
 
 
 def _profiles(rows: int = 6) -> xr.Dataset:
@@ -71,6 +74,21 @@ def test_a_missing_reference_is_reported(tmp_path):
 
 
 # -- what the catalogue derives ---------------------------------------------
+
+def test_model_coordinate_values_are_captured_exactly_for_the_catalogue():
+    values = _catalogue_coordinate_values(model_package())
+
+    assert values == {
+        "time_values": ["2026-09-28T00:00:00.000000000"],
+        "depth_values": [0.0, 10.0, 20.0],
+    }
+
+
+def test_observation_coordinate_rows_remain_in_the_managed_object():
+    values = _catalogue_coordinate_values(
+        _package(_profiles(), DatasetGeometry.PROFILE))
+
+    assert values == {"time_values": None, "depth_values": None}
 
 def test_the_extent_covers_what_was_stored():
     extent = _extent_of(_package(_profiles(), DatasetGeometry.PROFILE))

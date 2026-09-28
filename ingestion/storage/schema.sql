@@ -21,6 +21,11 @@ CREATE TABLE IF NOT EXISTS dataset_version (
     validation       jsonb NOT NULL DEFAULT '{}'::jsonb,
     metadata         jsonb NOT NULL DEFAULT '{}'::jsonb,
     source_details   jsonb NOT NULL DEFAULT '{}'::jsonb,
+    -- Exact model coordinate values make catalogue listing independent of
+    -- object-store reads. Nullable because catalogues created before this
+    -- addition retain their existing immutable rows.
+    time_values      jsonb,
+    depth_values     jsonb,
     -- The extent of what was stored, so downstream can find versions
     -- covering a region and period without opening any arrays.
     time_start       timestamptz,
@@ -30,6 +35,11 @@ CREATE TABLE IF NOT EXISTS dataset_version (
     footprint        geography(Polygon, 4326),
     created_at       timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE dataset_version
+    ADD COLUMN IF NOT EXISTS time_values jsonb;
+ALTER TABLE dataset_version
+    ADD COLUMN IF NOT EXISTS depth_values jsonb;
 
 CREATE INDEX IF NOT EXISTS dataset_version_dataset
     ON dataset_version (source_id, dataset_id);

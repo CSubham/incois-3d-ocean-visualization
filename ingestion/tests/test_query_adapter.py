@@ -48,6 +48,8 @@ def _version(**changes):
             "download_path": "/private/download/model.nc",
             "catalogue": "postgresql://private-secret/catalogue",
         },
+        "time_values": ["2026-09-28T00:00:00.000000000"],
+        "depth_values": [0.0, 10.0, 20.0],
         "time_start": datetime(2026, 9, 28, tzinfo=timezone.utc),
         "time_end": datetime(2026, 9, 28, tzinfo=timezone.utc),
         "depth_min": 0.0,
@@ -217,7 +219,7 @@ def test_descriptor_maps_catalogue_coordinates_and_source_declarations():
     assert connection.calls[0][1] == (MODEL_VERSION_ID,)
 
 
-def test_summary_reads_exact_coordinate_values_without_loading_field():
+def test_summary_reads_exact_catalogue_coordinates_without_opening_object():
     dataset = model_dataset()
     query, _, objects = _query(dataset=dataset)
 
@@ -227,12 +229,27 @@ def test_summary_reads_exact_coordinate_values_without_loading_field():
     assert summary.depth_values == (0.0, 10.0, 20.0)
     assert summary.time_steps == 1
     assert summary.time_values[0].startswith("2026-09-28T00:00:00")
-    assert dataset["water_temp"].variable._in_memory is True
+    assert objects.opened == []
+    assert objects.close_calls == 0
+
+
+def test_legacy_summary_without_catalogue_coordinates_opens_object():
+    query, _, objects = _query(version=_version(
+        time_values=None, depth_values=None))
+
+    summary = query.describe_version(MODEL_VERSION_ID)
+
+    assert summary.depth_values == (0.0, 10.0, 20.0)
+    assert summary.time_values[0].startswith("2026-09-28T00:00:00")
+    assert objects.opened == [OBJECT_REFERENCE]
     assert objects.close_calls == 1
 
 
 def test_listing_skips_and_reports_an_unreadable_managed_version():
-    query, _, _ = _query(object_failure=RuntimeError(OBJECT_REFERENCE))
+    query, _, _ = _query(
+        version=_version(time_values=None, depth_values=None),
+        object_failure=RuntimeError(OBJECT_REFERENCE),
+    )
 
     listing = query.list_model_versions()
 
@@ -249,7 +266,12 @@ def test_listing_keeps_readable_versions_when_another_object_is_unreadable():
     broken_reference = "/private/broken.nc"
     versions = (
         _version(),
-        _version(import_id=broken_id, object_ref=broken_reference),
+        _version(
+            import_id=broken_id,
+            object_ref=broken_reference,
+            time_values=None,
+            depth_values=None,
+        ),
     )
 
     class MixedObjects(FakeObjects):

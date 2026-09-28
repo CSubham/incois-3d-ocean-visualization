@@ -242,14 +242,27 @@ def _profile_variable(dataset: xr.Dataset, name: str, units: str | None,
     if name not in dataset.variables:
         raise VariableUnavailable(version_id, name)
     quality_name = _quality_name(dataset, name)
+    quality = dataset[quality_name] if quality_name is not None else None
     return ProfileVariable(
         name=name,
         units=units,
         values=_profile_values(dataset[name], sample_dim, version_id),
         quality_control_name=quality_name,
         quality_control=(
-            _profile_values(dataset[quality_name], sample_dim, version_id)
-            if quality_name is not None else None
+            _profile_values(quality, sample_dim, version_id)
+            if quality is not None else None
+        ),
+        qc_flag_values=(
+            _qc_flag_values(quality, version_id)
+            if quality is not None else None
+        ),
+        qc_flag_meanings=(
+            _optional_qc_text(quality, "flag_meanings", version_id)
+            if quality is not None else None
+        ),
+        qc_conventions=(
+            _optional_qc_text(quality, "conventions", version_id)
+            if quality is not None else None
         ),
     )
 
@@ -315,6 +328,53 @@ def _quality_name(dataset: xr.Dataset, variable: str) -> str | None:
          if str(name).lower() == expected),
         None,
     )
+
+
+def _qc_flag_values(array: xr.DataArray,
+                    version_id: str) -> tuple[ProfileValue, ...] | None:
+    if "flag_values" not in array.attrs:
+        return None
+    values = np.asarray(array.attrs["flag_values"], dtype=object)
+    if values.ndim > 1:
+        raise UndeclaredReference(
+            version_id,
+            f"scalar or vector QC flag_values on {array.name!r}",
+        )
+    return tuple(
+        _qc_attribute_scalar(value, array.name, "flag_values", version_id)
+        for value in values.reshape(-1)
+    )
+
+
+def _optional_qc_text(array: xr.DataArray, attribute: str,
+                      version_id: str) -> str | None:
+    if attribute not in array.attrs:
+        return None
+    value = _qc_attribute_scalar(
+        array.attrs[attribute], array.name, attribute, version_id)
+    if not isinstance(value, str):
+        raise UndeclaredReference(
+            version_id, f"text QC {attribute} on {array.name!r}")
+    return value
+
+
+def _qc_attribute_scalar(value: Any, variable: Any, attribute: str,
+                         version_id: str) -> ProfileValue:
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except UnicodeDecodeError:
+            raise UndeclaredReference(
+                version_id, f"UTF-8 QC {attribute} on {variable!r}") from None
+    if (not isinstance(value, (str, int, float, bool))
+            or isinstance(value, float) and not np.isfinite(value)):
+        raise UndeclaredReference(
+            version_id,
+            f"scalar text or numeric QC {attribute} on {variable!r}",
+        )
+    return value
 
 
 def _text_values(values: Any) -> tuple[str, ...]:

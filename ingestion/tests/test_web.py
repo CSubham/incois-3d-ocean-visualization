@@ -4,14 +4,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ingestion import adapters
+from ingestion.service import IngestionService
+from ingestion.storage import RecordingSink
 from ingestion.tests.fakes import GRID, UNREADABLE, FakeSource
-from ingestion.web import app
+from ingestion import web
 
 
 @pytest.fixture()
 def client(monkeypatch) -> TestClient:
     monkeypatch.setitem(adapters._BUILDERS, FakeSource.source_id, FakeSource)
-    return TestClient(app)
+    monkeypatch.setattr(web, "service", IngestionService(RecordingSink()))
+    return TestClient(web.app)
 
 
 def test_health(client):

@@ -29,7 +29,8 @@ from ingestion.storage.objects import ObjectStore
 _VERSION_COLUMNS = """
     import_id, source_id, source_name, dataset_id, dataset_name,
     source_kind, geometry, object_ref, sizes, selection, validation,
-    metadata, source_details, time_start, time_end, depth_min, depth_max,
+    metadata, source_details, time_values, depth_values,
+    time_start, time_end, depth_min, depth_max,
     created_at,
     ST_XMin(Box2D(footprint::geometry)) AS west,
     ST_XMax(Box2D(footprint::geometry)) AS east,
@@ -135,7 +136,7 @@ class CatalogueModelFieldQuery(ScientificQuery):
         for version in versions:
             version_id = str(version["import_id"])
             try:
-                summaries.append(self._summary_from_object(
+                summaries.append(self._summary_for_version(
                     version, variables[version_id]))
             except ModelFieldQueryError as exc:
                 unavailable.append(UnavailableDatasetVersion(
@@ -154,7 +155,7 @@ class CatalogueModelFieldQuery(ScientificQuery):
             self, dataset_version_id: str) -> DatasetVersionSummary:
         version, variables = self._version(dataset_version_id)
         _require_grid(version)
-        return self._summary_from_object(version, variables)
+        return self._summary_for_version(version, variables)
 
     def open_model_field(
             self, dataset_version_id: str,
@@ -265,6 +266,16 @@ class CatalogueModelFieldQuery(ScientificQuery):
         finally:
             _close_quietly(dataset)
 
+    def _summary_for_version(
+        self,
+        version: Mapping[str, Any],
+        variables: Sequence[Mapping[str, Any]],
+    ) -> DatasetVersionSummary:
+        if (version.get("time_values") is not None
+                and version.get("depth_values") is not None):
+            return _summary(version, variables)
+        return self._summary_from_object(version, variables)
+
     def _profile_record(
             self, identity: ProfileIdentity) -> Mapping[str, Any]:
         try:
@@ -339,7 +350,7 @@ def _require_observation_profile(version: Mapping[str, Any]) -> None:
 
 def _summary(version: Mapping[str, Any],
              variables: Sequence[Mapping[str, Any]],
-             dataset: xr.Dataset) -> DatasetVersionSummary:
+             dataset: xr.Dataset | None = None) -> DatasetVersionSummary:
     version_id = str(version["import_id"])
     coordinate_names = _coordinate_names(version, version_id)
     sizes = _required_mapping(version, "sizes", version_id)
@@ -351,14 +362,24 @@ def _summary(version: Mapping[str, Any],
             version_id, "time and depth coordinate dimensions") from None
     time_name = coordinate_names["time"]
     depth_name = coordinate_names["vertical"]
-    if time_name not in dataset.variables:
-        raise UndeclaredReference(
-            version_id, f"the time coordinate {time_name!r}")
-    if depth_name not in dataset.variables:
-        raise UndeclaredReference(
-            version_id, f"the depth coordinate {depth_name!r}")
-    time_values = _time_coordinate_values(dataset[time_name], version_id)
-    depth_values = _depth_coordinate_values(dataset[depth_name], version_id)
+    if (version.get("time_values") is not None
+            and version.get("depth_values") is not None):
+        time_values = _catalogue_time_values(
+            version["time_values"], version_id)
+        depth_values = _catalogue_depth_values(
+            version["depth_values"], version_id)
+    else:
+        if dataset is None:
+            raise UndeclaredReference(
+                version_id, "catalogued time and depth coordinate values")
+        if time_name not in dataset.variables:
+            raise UndeclaredReference(
+                version_id, f"the time coordinate {time_name!r}")
+        if depth_name not in dataset.variables:
+            raise UndeclaredReference(
+                version_id, f"the depth coordinate {depth_name!r}")
+        time_values = _time_coordinate_values(dataset[time_name], version_id)
+        depth_values = _depth_coordinate_values(dataset[depth_name], version_id)
     if len(time_values) != time_steps or len(depth_values) != depth_levels:
         raise UndeclaredReference(
             version_id, "coordinate values matching catalogue dimensions")
@@ -573,6 +594,32 @@ def _optional_float(value: Any) -> float | None:
     return float(value) if value is not None else None
 
 
+def _catalogue_time_values(value: Any,
+                           version_id: str) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise UndeclaredReference(version_id, "catalogued time values")
+    values = tuple(value)
+    if not all(isinstance(item, str) and item.strip() for item in values):
+        raise UndeclaredReference(version_id, "catalogued ISO time values")
+    return values
+
+
+def _catalogue_depth_values(value: Any,
+                            version_id: str) -> tuple[float, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise UndeclaredReference(version_id, "catalogued depth values")
+    try:
+        values = tuple(
+            float(item) for item in value if not isinstance(item, bool))
+    except (TypeError, ValueError):
+        raise UndeclaredReference(
+            version_id, "numeric catalogued depth values") from None
+    if len(values) != len(value) or not all(np.isfinite(item) for item in values):
+        raise UndeclaredReference(
+            version_id, "finite numeric catalogued depth values")
+    return values
+
+
 def _time_coordinate_values(array: xr.DataArray,
                             version_id: str) -> tuple[str, ...]:
     if len(array.dims) != 1:
@@ -690,14 +737,27 @@ def _profile_variable(
     if name not in dataset.variables:
         raise VariableUnavailable(version_id, name)
     quality_name = _quality_name(dataset, name)
+    quality = dataset[quality_name] if quality_name is not None else None
     return ProfileVariable(
         name=name,
         units=_optional_text(variable.get("units")),
         values=_profile_values(dataset[name], sample_dim, version_id),
         quality_control_name=quality_name,
         quality_control=(
-            _profile_values(dataset[quality_name], sample_dim, version_id)
-            if quality_name is not None else None
+            _profile_values(quality, sample_dim, version_id)
+            if quality is not None else None
+        ),
+        qc_flag_values=(
+            _qc_flag_values(quality, version_id)
+            if quality is not None else None
+        ),
+        qc_flag_meanings=(
+            _optional_qc_text(quality, "flag_meanings", version_id)
+            if quality is not None else None
+        ),
+        qc_conventions=(
+            _optional_qc_text(quality, "conventions", version_id)
+            if quality is not None else None
         ),
     )
 
@@ -753,6 +813,53 @@ def _quality_name(dataset: xr.Dataset, variable: str) -> str | None:
          if str(name).lower() == expected),
         None,
     )
+
+
+def _qc_flag_values(array: xr.DataArray,
+                    version_id: str) -> tuple[ProfileValue, ...] | None:
+    if "flag_values" not in array.attrs:
+        return None
+    values = np.asarray(array.attrs["flag_values"], dtype=object)
+    if values.ndim > 1:
+        raise UndeclaredReference(
+            version_id,
+            f"scalar or vector QC flag_values on {array.name!r}",
+        )
+    return tuple(
+        _qc_attribute_scalar(value, array.name, "flag_values", version_id)
+        for value in values.reshape(-1)
+    )
+
+
+def _optional_qc_text(array: xr.DataArray, attribute: str,
+                      version_id: str) -> str | None:
+    if attribute not in array.attrs:
+        return None
+    value = _qc_attribute_scalar(
+        array.attrs[attribute], array.name, attribute, version_id)
+    if not isinstance(value, str):
+        raise UndeclaredReference(
+            version_id, f"text QC {attribute} on {array.name!r}")
+    return value
+
+
+def _qc_attribute_scalar(value: Any, variable: Any, attribute: str,
+                         version_id: str) -> ProfileValue:
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except UnicodeDecodeError:
+            raise UndeclaredReference(
+                version_id, f"UTF-8 QC {attribute} on {variable!r}") from None
+    if (not isinstance(value, (str, int, float, bool))
+            or isinstance(value, float) and not np.isfinite(value)):
+        raise UndeclaredReference(
+            version_id,
+            f"scalar text or numeric QC {attribute} on {variable!r}",
+        )
+    return value
 
 
 def _text_values(values: Any) -> tuple[str, ...]:

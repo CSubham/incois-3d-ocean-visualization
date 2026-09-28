@@ -225,11 +225,20 @@ class ProfileVariable:
     values: tuple[ProfileValue, ...]
     quality_control_name: str | None = None
     quality_control: tuple[ProfileValue, ...] | None = None
+    qc_flag_values: tuple[ProfileValue, ...] | None = None
+    qc_flag_meanings: str | None = None
+    qc_conventions: str | None = None
 
     def __post_init__(self) -> None:
         _required_text(self.name, "profile variable name")
         if self.quality_control_name is None and self.quality_control is not None:
             raise ValueError("quality-control values require their variable name")
+        qc_metadata = (
+            self.qc_flag_values, self.qc_flag_meanings, self.qc_conventions)
+        if (self.quality_control_name is None
+                and any(value is not None for value in qc_metadata)):
+            raise ValueError(
+                "quality-control metadata requires its variable name")
         if self.quality_control_name is not None:
             _required_text(self.quality_control_name, "quality-control name")
             if self.quality_control is None:
@@ -237,6 +246,13 @@ class ProfileVariable:
         if (self.quality_control is not None
                 and len(self.quality_control) != len(self.values)):
             raise ValueError("quality-control values must match measurements")
+        if self.qc_flag_values is not None:
+            object.__setattr__(self, "qc_flag_values",
+                               tuple(self.qc_flag_values))
+        if self.qc_flag_meanings is not None:
+            _required_text(self.qc_flag_meanings, "QC flag meanings")
+        if self.qc_conventions is not None:
+            _required_text(self.qc_conventions, "QC conventions")
 
 
 @dataclass(frozen=True)

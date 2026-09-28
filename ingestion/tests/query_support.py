@@ -94,7 +94,14 @@ def profile_dataset() -> xr.Dataset:
                 ("observation",), [28.0, 27.5],
                 {"units": "degree_Celsius"},
             ),
-            "TEMP_QC": (("observation",), ["1", "2"]),
+            "TEMP_QC": (
+                ("observation",), ["1", "2"],
+                {
+                    "flag_values": np.array([1, 2], dtype=np.int8),
+                    "flag_meanings": "good_data bad_data",
+                    "conventions": "fixture QC table 1",
+                },
+            ),
             "PSAL": (
                 ("observation",), [34.8, 35.1],
                 {"units": "1e-3"},
@@ -344,12 +351,22 @@ def rebuild_live_catalogue(dsn: str) -> Mapping[str, Any]:
                 "WHERE table_schema = 'public'"
             ).fetchall()
         }
+        version_columns = {
+            row[0] for row in connection.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public' "
+                "AND table_name = 'dataset_version'"
+            ).fetchall()
+        }
     expected = {"dataset_version", "dataset_variable", "observation_profile"}
-    if extension is None or not expected.issubset(tables):
+    coordinate_columns = {"time_values", "depth_values"}
+    if (extension is None or not expected.issubset(tables)
+            or not coordinate_columns.issubset(version_columns)):
         raise RuntimeError("the live catalogue schema did not initialize")
     return {
         "postgis": str(extension[0]),
         "tables": sorted(expected),
+        "coordinate_columns": sorted(coordinate_columns),
     }
 
 

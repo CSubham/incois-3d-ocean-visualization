@@ -11,7 +11,7 @@ import is a new version.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 import numpy as np
@@ -48,6 +48,7 @@ class PostgresStorage(StoragePort):
         self.objects = objects
 
     def hand_off(self, package: CanonicalPackage) -> StorageReceipt:
+        coordinate_values = _catalogue_coordinate_values(package)
         # The array is written first. A catalogue row pointing at nothing is
         # worse than an orphaned array, which is merely wasted space.
         reference = self.objects.put(package.import_id, package.dataset)
@@ -59,7 +60,8 @@ class PostgresStorage(StoragePort):
         try:
             with psycopg.connect(self.dsn) as connection:
                 with connection.cursor() as cursor:
-                    self._record_version(cursor, package, reference, extent)
+                    self._record_version(
+                        cursor, package, reference, extent, coordinate_values)
                     self._record_variables(cursor, package)
                     self._record_profiles(cursor, package, profiles)
                 connection.commit()
@@ -81,7 +83,8 @@ class PostgresStorage(StoragePort):
 
     @staticmethod
     def _record_version(cursor, package: CanonicalPackage, reference: str,
-                        extent: dict[str, Any]) -> None:
+                        extent: dict[str, Any],
+                        coordinate_values: dict[str, list[Any] | None]) -> None:
         selection = package.selection
         cursor.execute(
             """
@@ -89,9 +92,10 @@ class PostgresStorage(StoragePort):
                 import_id, source_id, source_name, dataset_id, dataset_name,
                 source_kind, geometry, object_ref, location, sizes,
                 selection, validation, metadata, source_details,
+                time_values, depth_values,
                 time_start, time_end, depth_min, depth_max, footprint)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, ST_GeogFromText(%s))
+                    %s, %s, %s, %s, %s, %s, ST_GeogFromText(%s))
             """,
             (package.import_id, package.source.source_id,
              package.source.source_name, package.source.dataset_id,
@@ -106,6 +110,10 @@ class PostgresStorage(StoragePort):
                     "checks_run": list(package.validation.checks_run)}),
              Jsonb(_plain(package.metadata)),
              Jsonb(_plain(package.source.details)),
+             (Jsonb(coordinate_values["time_values"])
+              if coordinate_values["time_values"] is not None else None),
+             (Jsonb(coordinate_values["depth_values"])
+              if coordinate_values["depth_values"] is not None else None),
              extent.get("time_start"), extent.get("time_end"),
              extent.get("depth_min"), extent.get("depth_max"),
              extent.get("footprint")))
@@ -147,6 +155,50 @@ def _coordinate(package: CanonicalPackage, role: str) -> Optional[xr.DataArray]:
     if name and name in package.dataset.variables:
         return package.dataset[name]
     return None
+
+
+def _catalogue_coordinate_values(
+        package: CanonicalPackage) -> dict[str, list[Any] | None]:
+    """Capture exact model axes once so catalogue reads stay object-free."""
+    if package.geometry is not DatasetGeometry.GRID:
+        return {"time_values": None, "depth_values": None}
+
+    time = _coordinate(package, "time")
+    depth = _coordinate(package, "vertical")
+    if time is None or depth is None:
+        raise StorageError(
+            "a gridded package requires time and depth coordinates")
+    if time.ndim != 1 or depth.ndim != 1:
+        raise StorageError(
+            "model time and depth coordinates must be one-dimensional")
+
+    time_values = [_catalogue_time(value)
+                   for value in np.ravel(time.values)]
+    try:
+        depth_values = [float(value) for value in np.ravel(depth.values)]
+    except (TypeError, ValueError):
+        raise StorageError("model depth coordinates must be numeric") from None
+    if not all(np.isfinite(value) for value in depth_values):
+        raise StorageError("model depth coordinates must be finite")
+    if not time_values or not depth_values:
+        raise StorageError(
+            "a gridded package requires time and depth coordinate values")
+    return {"time_values": time_values, "depth_values": depth_values}
+
+
+def _catalogue_time(value: Any) -> str:
+    if isinstance(value, np.datetime64):
+        if np.isnat(value):
+            raise StorageError("model time coordinates must not be missing")
+        return str(np.datetime_as_string(value, unit="ns"))
+    if np.ma.is_masked(value):
+        raise StorageError("model time coordinates must not be missing")
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    rendered = value.isoformat() if hasattr(value, "isoformat") else str(value)
+    if not isinstance(rendered, str) or not rendered.strip():
+        raise StorageError("model time coordinates must be ISO values")
+    return rendered
 
 
 def _extent_of(package: CanonicalPackage) -> dict[str, Any]:

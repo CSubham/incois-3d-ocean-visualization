@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 import numpy as np
+import psycopg
 import pytest
 
 from ingestion.config import MODEL_SOURCE_REFERENCES
@@ -167,9 +168,15 @@ def test_contract_finds_markers_and_retrieves_an_exact_profile(query_case):
     assert variables["TEMP"].values == (28.0, 27.5)
     assert variables["TEMP"].quality_control_name == "TEMP_QC"
     assert variables["TEMP"].quality_control == ("1", "2")
+    assert variables["TEMP"].qc_flag_values == (1, 2)
+    assert variables["TEMP"].qc_flag_meanings == "good_data bad_data"
+    assert variables["TEMP"].qc_conventions == "fixture QC table 1"
     assert variables["PSAL"].units == "1e-3"
     assert variables["PSAL"].values == (34.8, 35.1)
     assert variables["PSAL"].quality_control == ("1", "1")
+    assert variables["PSAL"].qc_flag_values is None
+    assert variables["PSAL"].qc_flag_meanings is None
+    assert variables["PSAL"].qc_conventions is None
 
 
 def test_contract_profile_lookup_respects_bounds_and_reports_missing_identity(
@@ -184,6 +191,36 @@ def test_contract_profile_lookup_respects_bounds_and_reports_missing_identity(
     with pytest.raises(ProfileNotFound):
         query_case.query.get_profile(ProfileIdentity(
             query_case.profile_version_id, "7902250", "missing-cycle"))
+
+
+@pytest.mark.live
+def test_live_catalogue_listing_uses_persisted_coordinates_without_object_read(
+        catalogue_case):
+    dsn, reason = live_dsn_status()
+    assert reason is None
+    assert dsn is not None
+    with psycopg.connect(dsn) as connection:
+        stored = connection.execute(
+            "SELECT time_values, depth_values FROM dataset_version "
+            "WHERE import_id = %s",
+            (catalogue_case.model_version_id,),
+        ).fetchone()
+    assert stored == (
+        ["2026-09-28T00:00:00.000000000"],
+        [0.0, 10.0, 20.0],
+    )
+
+    class ObjectReadsForbidden:
+        def open(self, reference):
+            raise AssertionError(f"unexpected object read: {reference}")
+
+    query = CatalogueModelFieldQuery(
+        dsn, ObjectReadsForbidden(), MODEL_SOURCE_REFERENCES)
+    listing = query.list_model_versions()
+
+    assert [item.id for item in listing] == [
+        catalogue_case.model_version_id]
+    assert listing.unavailable == ()
 
 
 def test_contract_and_managed_handoff_import_without_storage_or_psycopg():
