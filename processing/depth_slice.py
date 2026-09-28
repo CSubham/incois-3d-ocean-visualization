@@ -274,7 +274,7 @@ def build_depth_slice(
             source_order=subset.source_dimensions,
             semantic_order=(subset.semantic_dimensions[1],
                             subset.semantic_dimensions[2]),
-            slice_shape=tuple(int(size) for size in delivered.shape),
+            slice_shape=(int(delivered.shape[0]), int(delivered.shape[1])),
         ),
         variable_units=subset.variable_units,
         source_dtype=str(subset.values.dtype),

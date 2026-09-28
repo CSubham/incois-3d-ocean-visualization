@@ -75,7 +75,8 @@ def build_sampled_scalar_point_field(
             longitude=subset.longitude_source_indices[int(longitude_position)],
         )
         for depth_position, latitude_position, longitude_position in zip(
-            depth_positions, latitude_positions, longitude_positions)
+            depth_positions, latitude_positions, longitude_positions,
+            strict=True)
     )
     delivered_count = len(selected_flat)
     omitted_count = original_count - delivered_count
@@ -88,7 +89,9 @@ def build_sampled_scalar_point_field(
         dimensions=DimensionMetadata(
             source_order=subset.source_dimensions,
             semantic_order=subset.semantic_dimensions,
-            subset_shape=tuple(int(size) for size in subset.values.shape),
+            subset_shape=(int(subset.values.shape[0]),
+                          int(subset.values.shape[1]),
+                          int(subset.values.shape[2])),
         ),
         variable_units=subset.variable_units,
         source_dtype=str(subset.values.dtype),

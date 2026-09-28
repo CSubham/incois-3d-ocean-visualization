@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import xarray as xr
@@ -103,11 +103,11 @@ def subset_scalar_field(dataset: xr.Dataset,
     latitude = _coordinate(dataset, roles.latitude, "latitude")
     longitude = _coordinate(dataset, roles.longitude, "longitude")
 
-    coordinate_dimensions = {
-        "time": time.dims[0],
-        "depth": depth.dims[0],
-        "latitude": latitude.dims[0],
-        "longitude": longitude.dims[0],
+    coordinate_dimensions: dict[str, str] = {
+        "time": cast(str, time.dims[0]),
+        "depth": cast(str, depth.dims[0]),
+        "latitude": cast(str, latitude.dims[0]),
+        "longitude": cast(str, longitude.dims[0]),
     }
     if len(set(coordinate_dimensions.values())) != 4:
         raise GridValidationError(

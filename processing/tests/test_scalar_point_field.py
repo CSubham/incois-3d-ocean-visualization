@@ -196,7 +196,8 @@ def test_selected_source_indices_trace_every_delivered_value():
     product = _product(dataset, maximum_points=5)
 
     for delivered, source in zip(product.points.values,
-                                 product.points.source_indices):
+                                 product.points.source_indices,
+                                 strict=True):
         source_value = dataset["water_temp"].values[
             source.time, source.depth, source.latitude, source.longitude]
         assert delivered == source_value

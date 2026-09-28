@@ -198,7 +198,8 @@ def decode_text(layout: list[Mapping[str, Any]], buffer: bytes,
     except KeyError as exc:
         raise WireFormatError(f"no text column {name!r} is in the layout") from exc
     return tuple(payload[int(start):int(end)].decode("utf-8")
-                 for start, end in zip(offsets[:-1], offsets[1:]))
+                 for start, end in zip(
+                     offsets[:-1], offsets[1:], strict=True))
 
 
 def _plain(value: Any) -> Any:

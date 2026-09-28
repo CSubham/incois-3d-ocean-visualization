@@ -533,7 +533,8 @@ def build_observation_markers(
     coordinates, metadata = _observation_context(dataset, descriptor)
     platforms, cycles = _identity_columns(dataset, descriptor)
     groups: OrderedDict[tuple[str, str], list[int]] = OrderedDict()
-    for source_index, (platform, cycle) in enumerate(zip(platforms, cycles)):
+    for source_index, (platform, cycle) in enumerate(
+            zip(platforms, cycles, strict=True)):
         if platform is None or cycle is None or not platform or not cycle:
             raise ObservationIdentityError(
                 f"source observation {source_index} has no exact platform "
@@ -627,7 +628,8 @@ def build_observation_profile(
     platforms, cycles = _identity_columns(dataset, descriptor)
     wanted = selection.identity
     source_indices = tuple(
-        index for index, (platform, cycle) in enumerate(zip(platforms, cycles))
+        index for index, (platform, cycle) in enumerate(
+            zip(platforms, cycles, strict=True))
         if platform == wanted.platform_id and cycle == wanted.cycle
     )
     if not source_indices:
