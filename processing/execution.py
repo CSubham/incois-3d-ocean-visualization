@@ -209,7 +209,7 @@ class LocalExecutor(ProductExecutor):
 
         job = ProductJob(request_id=uuid.uuid4().hex, request=request,
                          state=JobState.RUNNING, submitted_at=_now())
-        self._keep(job)
+        self._keep(job, new=True)
         try:
             product = self._builder(request)
             built = product.sampling.original_point_count
@@ -237,9 +237,14 @@ class LocalExecutor(ProductExecutor):
                 f"no request {request_id!r} is known to this executor")
         return found
 
-    def _keep(self, job: ProductJob) -> None:
+    def _keep(self, job: ProductJob, *, new: bool = False) -> None:
+        # Retention follows submission order. A finishing job only updates a
+        # record still held; one already forgotten stays forgotten, so a job
+        # that finishes late can never push out a newer request.
         with self._lock:
-            self._jobs[job.request_id] = job
-            self._jobs.move_to_end(job.request_id)
-            while len(self._jobs) > self._retained:
-                self._jobs.popitem(last=False)
+            if new:
+                self._jobs[job.request_id] = job
+                while len(self._jobs) > self._retained:
+                    self._jobs.popitem(last=False)
+            elif job.request_id in self._jobs:
+                self._jobs[job.request_id] = job

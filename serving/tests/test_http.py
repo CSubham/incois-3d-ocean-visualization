@@ -65,6 +65,7 @@ def test_a_product_is_requested_described_and_fetched_as_binary(client):
 
 @pytest.mark.parametrize("field, value, code", [
     ("time", "yesterday", "invalid_request"),
+    ("time", "NaT", "invalid_request"),
     ("west", 170.0, "invalid_request"),
     ("maximum_points", 0, "point_budget"),
 ])

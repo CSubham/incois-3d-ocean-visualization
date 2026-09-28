@@ -174,3 +174,32 @@ def test_an_effective_budget_cannot_exceed_the_requested_one():
                       requested_maximum_points=9)
     assert reduced.budget_reduced is True
     assert fixtures.request().budget_reduced is False
+
+
+def test_a_job_that_finishes_late_cannot_evict_a_newer_request():
+    import threading
+
+    release, started = threading.Event(), threading.Event()
+
+    def builder(request):
+        if request.sampling.maximum_points == 7:
+            started.set()
+            release.wait(5)
+        return fixtures.builder()(request)
+
+    executor = LocalExecutor(builder, maximum_points=100, maximum_cells=1000,
+                             retained_jobs=2)
+    slow: dict = {}
+    worker = threading.Thread(target=lambda: slow.setdefault(
+        "job", executor.submit(fixtures.request(maximum_points=7))))
+    worker.start()
+    started.wait(5)
+    newer = executor.submit(fixtures.request(maximum_points=5))
+    newest = executor.submit(fixtures.request(maximum_points=5))
+    release.set()
+    worker.join()
+
+    assert executor.job(newer.request_id) == newer
+    assert executor.job(newest.request_id) == newest
+    with pytest.raises(UnknownRequestError):
+        executor.job(slow["job"].request_id)
