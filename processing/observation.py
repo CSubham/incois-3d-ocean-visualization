@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 import numpy as np
 import xarray as xr
@@ -17,6 +17,12 @@ from processing.errors import (
     AllMissingObservationError, InvalidRequestError, ObservationIdentityError,
     ObservationValidationError, ObservationVariableError,
 )
+
+if TYPE_CHECKING:
+    from ingestion.query import (
+        ObservationProfile as StoredObservationProfile,
+        ProfileMarker as StoredProfileMarker,
+    )
 
 
 MARKER_SCHEMA_VERSION = "s4.observation-markers/1.0"
@@ -33,9 +39,25 @@ OBSERVATION_IDENTITY_TRANSFORM = CoordinateTransform(
              "direction; not converted, sorted or interpolated",
 )
 
+OBSERVATION_RECORD_TRANSFORM = CoordinateTransform(
+    kind="s3-observation-record",
+    horizontal="longitude, latitude and marker time supplied by the S3 "
+               "ProfileMarker contract; S4 does not average, reproject or "
+               "re-wrap them",
+    vertical="source-order vertical values supplied by the S3 "
+             "ObservationProfile contract; S4 does not convert, sort or "
+             "interpolate them",
+)
+
 OBSERVATION_MISSING_MASK = MaskSemantics(
     true_means="the source observation has no decoded value",
     sources=("NaN or NaT after decoding", "masked array element"),
+    masked_values="not scientific values; consumers must apply the mask",
+)
+
+OBSERVATION_RECORD_MISSING_MASK = MaskSemantics(
+    true_means="the S3 observation record has no scientific value",
+    sources=("None in an S3 profile record", "NaN in a numeric record value"),
     masked_values="not scientific values; consumers must apply the mask",
 )
 
@@ -117,6 +139,36 @@ class ObservationDatasetDescriptor:
 
 
 @dataclass(frozen=True)
+class ObservationRecordDescriptor:
+    """Semantics S3 records do not carry and S4 must never guess."""
+
+    identity: DatasetIdentity
+    spatial_reference: SpatialReference
+    vertical_kind: str
+    provenance: Mapping[str, Any]
+    sample_dimension: str = "observation_record"
+
+    def __post_init__(self) -> None:
+        if self.vertical_kind not in VERTICAL_KINDS:
+            raise InvalidRequestError(
+                f"vertical kind must be one of {VERTICAL_KINDS}, not "
+                f"{self.vertical_kind!r}")
+        if not isinstance(self.sample_dimension, str) \
+                or not self.sample_dimension.strip():
+            raise InvalidRequestError(
+                "an observation-record sample dimension is required")
+        if not isinstance(self.provenance, Mapping):
+            raise InvalidRequestError("provenance must be a mapping")
+        object.__setattr__(self, "provenance",
+                           _frozen_mapping(self.provenance))
+        recorded = self.provenance.get("import_id")
+        if recorded is not None and recorded != self.identity.dataset_version_id:
+            raise InvalidRequestError(
+                f"provenance import_id {recorded!r} contradicts "
+                f"dataset_version_id {self.identity.dataset_version_id!r}")
+
+
+@dataclass(frozen=True)
 class ObservationProfileIdentity:
     platform_id: str
     cycle: str
@@ -149,7 +201,7 @@ class ObservationCoordinateMetadata:
     names: ObservationCoordinateRoles
     sample_dimension: str
     units: Mapping[str, str | None]
-    dtypes: Mapping[str, str]
+    dtypes: Mapping[str, str | None]
     time_encoding: Mapping[str, str | None]
     vertical_kind: str
 
@@ -223,15 +275,15 @@ class ObservationMarkerProduct:
 @dataclass(frozen=True)
 class ObservationProfileVariable:
     name: str
-    units: str
-    source_dtype: str
+    units: str | None
+    source_dtype: str | None
     values: np.ndarray
     missing_value_mask: np.ndarray
     qc_variable: str | None = None
     qc_source_dtype: str | None = None
     qc_flags: np.ndarray | None = None
     qc_missing_value_mask: np.ndarray | None = None
-    qc_flag_values: tuple[str | int | float | bool, ...] | None = None
+    qc_flag_values: tuple[str | int | float | bool | None, ...] | None = None
     qc_flag_meanings: str | None = None
     qc_conventions: str | None = None
 
@@ -243,11 +295,11 @@ class ObservationProfileVariable:
         object.__setattr__(self, "values", _readonly_array(values))
         object.__setattr__(self, "missing_value_mask",
                            _readonly_array(mask.astype(bool)))
-        qc_parts = (self.qc_variable, self.qc_source_dtype, self.qc_flags,
+        qc_parts = (self.qc_variable, self.qc_flags,
                     self.qc_missing_value_mask)
         if any(part is not None for part in qc_parts):
             if any(part is None for part in qc_parts):
-                raise ValueError("QC name, dtype, flags and mask must travel together")
+                raise ValueError("QC name, flags and mask must travel together")
             qc_flags = np.asarray(self.qc_flags)
             qc_mask = np.asarray(self.qc_missing_value_mask)
             if qc_flags.ndim != 1 or qc_flags.shape != values.shape \
@@ -257,13 +309,15 @@ class ObservationProfileVariable:
             object.__setattr__(self, "qc_missing_value_mask",
                                _readonly_array(qc_mask.astype(bool)))
         qc_metadata = (self.qc_flag_values, self.qc_flag_meanings,
-                       self.qc_conventions)
+                       self.qc_conventions, self.qc_source_dtype)
         if self.qc_variable is None and any(value is not None
                                             for value in qc_metadata):
             raise ValueError("QC vocabulary metadata requires a QC variable")
         if self.qc_flag_values is not None:
+            frozen = _frozen_mapping(
+                {"values": self.qc_flag_values})["values"]
             object.__setattr__(self, "qc_flag_values",
-                               tuple(self.qc_flag_values))
+                               frozen)
 
 
 @dataclass(frozen=True)
@@ -660,4 +714,255 @@ def build_observation_profile(
         timestamps=timestamps[selected],
         timestamp_missing_value_mask=timestamp_mask[selected],
         variables=tuple(variables),
+    )
+
+
+def _record_identity(identity: Any) -> ObservationProfileIdentity:
+    return ObservationProfileIdentity(
+        platform_id=identity.platform_id,
+        cycle=identity.cycle,
+    )
+
+
+def _require_record_version(identity: Any,
+                            descriptor: ObservationRecordDescriptor) -> None:
+    if identity.dataset_version_id != descriptor.identity.dataset_version_id:
+        raise ObservationIdentityError(
+            f"S3 profile belongs to dataset version "
+            f"{identity.dataset_version_id!r}, not descriptor version "
+            f"{descriptor.identity.dataset_version_id!r}")
+
+
+def _record_numeric(values: tuple[Any, ...], role: str
+                    ) -> tuple[np.ndarray, np.ndarray]:
+    missing = np.zeros(len(values), dtype=bool)
+    valid: list[int | float] = []
+    for index, value in enumerate(values):
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            missing[index] = True
+            continue
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not np.isfinite(value)):
+            raise ObservationValidationError(
+                f"{role} from the S3 observation record must contain finite "
+                "real numbers or explicit missing values")
+        valid.append(value)
+    dtype = np.asarray(valid).dtype if valid else np.dtype("float64")
+    output = np.zeros(len(values), dtype=dtype)
+    valid_position = 0
+    for index in np.flatnonzero(~missing):
+        output[index] = valid[valid_position]
+        valid_position += 1
+    return output, missing
+
+
+def _record_text(values: tuple[Any, ...]
+                 ) -> tuple[np.ndarray, np.ndarray]:
+    output = np.empty(len(values), dtype=object)
+    missing = np.zeros(len(values), dtype=bool)
+    for index, value in enumerate(values):
+        if value is None:
+            output[index] = ""
+            missing[index] = True
+        else:
+            output[index] = value
+    return output, missing
+
+
+def _record_coordinate_metadata(
+        profile: StoredObservationProfile,
+        descriptor: ObservationRecordDescriptor) -> ObservationCoordinateMetadata:
+    names = ObservationCoordinateRoles(
+        platform="platform_id",
+        cycle="cycle",
+        longitude="longitude",
+        latitude="latitude",
+        time=profile.time_coordinate,
+        vertical=profile.depth_coordinate,
+    )
+    return ObservationCoordinateMetadata(
+        names=names,
+        sample_dimension=descriptor.sample_dimension,
+        units={
+            "platform": None,
+            "cycle": None,
+            "longitude": "degrees_east",
+            "latitude": "degrees_north",
+            "time": None,
+            "vertical": profile.depth_units,
+        },
+        dtypes={
+            "platform": None,
+            "cycle": None,
+            "longitude": None,
+            "latitude": None,
+            "time": None,
+            "vertical": None,
+        },
+        time_encoding={"units": None, "calendar": None},
+        vertical_kind=descriptor.vertical_kind,
+    )
+
+
+def build_observation_markers_from_records(
+        records: tuple[tuple[StoredProfileMarker,
+                             StoredObservationProfile], ...],
+        descriptor: ObservationRecordDescriptor) -> ObservationMarkerProduct:
+    """Build the existing marker envelope from immutable S3 records."""
+    if not records:
+        raise ObservationIdentityError(
+            f"no S3 profile markers matched dataset version "
+            f"{descriptor.identity.dataset_version_id!r}")
+
+    markers: list[ObservationMarker] = []
+    skipped: list[SkippedObservationProfile] = []
+    delivered_profiles: list[StoredObservationProfile] = []
+    original_observation_count = 0
+    for marker_record, profile_record in records:
+        _require_record_version(marker_record.identity, descriptor)
+        _require_record_version(profile_record.identity, descriptor)
+        if marker_record.identity != profile_record.identity:
+            raise ObservationIdentityError(
+                "S3 marker and profile records have different identities")
+        source_indices = tuple(range(len(profile_record.depth_values)))
+        original_observation_count += len(source_indices)
+        vertical, vertical_missing = _record_numeric(
+            profile_record.depth_values, "profile vertical values")
+        identity = _record_identity(marker_record.identity)
+        valid_vertical = vertical[~vertical_missing]
+        if valid_vertical.size == 0:
+            skipped.append(SkippedObservationProfile(
+                identity=identity,
+                source_indices=source_indices,
+                reason="no non-missing vertical values in the S3 profile record",
+            ))
+            continue
+        delivered_profiles.append(profile_record)
+        markers.append(ObservationMarker(
+            identity=identity,
+            longitude=marker_record.longitude,
+            latitude=marker_record.latitude,
+            time_value=marker_record.observed_at,
+            vertical_range=ObservationVerticalRange(
+                minimum=np.min(valid_vertical).item(),
+                maximum=np.max(valid_vertical).item(),
+                valid_observation_count=int(valid_vertical.size),
+                missing_observation_count=int(vertical_missing.sum()),
+            ),
+            representative_source_index=0,
+            source_indices=source_indices,
+        ))
+
+    if not markers:
+        reasons = "; ".join(
+            f"{item.identity.platform_id!r}/{item.identity.cycle!r}: "
+            f"{item.reason}" for item in skipped)
+        raise ObservationValidationError(
+            f"no observation marker can be built; skipped profiles: {reasons}")
+
+    first = delivered_profiles[0]
+    coordinate_signature = (
+        first.depth_coordinate, first.depth_units, first.time_coordinate)
+    if any((profile.depth_coordinate, profile.depth_units,
+            profile.time_coordinate) != coordinate_signature
+           for profile in delivered_profiles[1:]):
+        raise ObservationValidationError(
+            "S3 profile records in one marker product must share vertical and "
+            "time coordinate semantics")
+    return ObservationMarkerProduct(
+        dataset_identity=descriptor.identity,
+        coordinates=_record_coordinate_metadata(
+            first, descriptor),
+        spatial_reference=descriptor.spatial_reference,
+        provenance=descriptor.provenance,
+        grouping=MarkerGroupingMetadata(
+            grouping_keys=("platform_id", "cycle"),
+            representative_policy=(
+                "marker longitude, latitude and time are supplied by the S3 "
+                "ProfileMarker record; source index zero anchors the companion "
+                "S3 profile-record sequence and is not a coordinate reduction"),
+            original_observation_count=original_observation_count,
+            delivered_marker_count=len(markers),
+            skipped_profile_count=len(skipped),
+        ),
+        markers=tuple(markers),
+        skipped_profiles=tuple(skipped),
+        coordinate_transform=OBSERVATION_RECORD_TRANSFORM,
+        mask_semantics=OBSERVATION_RECORD_MISSING_MASK,
+    )
+
+
+def build_observation_profile_from_record(
+        profile: StoredObservationProfile,
+        descriptor: ObservationRecordDescriptor,
+        selection: ObservationProfileSelection) -> ObservationProfileProduct:
+    """Build the existing exact-profile envelope from one S3 record."""
+    _require_record_version(profile.identity, descriptor)
+    identity = _record_identity(profile.identity)
+    if identity != selection.identity:
+        raise ObservationIdentityError(
+            f"S3 profile {identity.platform_id!r}/{identity.cycle!r} does not "
+            "match the requested exact identity")
+
+    vertical, vertical_missing = _record_numeric(
+        profile.depth_values, "profile vertical values")
+    if bool(vertical_missing.all()):
+        raise ObservationValidationError(
+            f"profile {identity.platform_id!r}/{identity.cycle!r} has no "
+            "vertical values")
+    timestamps, timestamp_missing = _record_text(profile.timestamps)
+    available = {variable.name: variable for variable in profile.variables}
+    requested: list[ObservationProfileVariable] = []
+    has_valid_measurement = False
+    for name in selection.variables:
+        source = available.get(name)
+        if source is None:
+            names = ", ".join(sorted(available)) or "none"
+            raise ObservationVariableError(
+                f"observation variable {name!r} is unavailable; available "
+                f"variables: {names}")
+        values, missing = _record_numeric(
+            source.values, f"observation variable {name!r}")
+        has_valid_measurement |= bool((~missing).any())
+
+        qc_values = None
+        qc_missing = None
+        if source.quality_control is not None:
+            qc_values, qc_missing = _record_text(source.quality_control)
+
+        requested.append(ObservationProfileVariable(
+            name=name,
+            units=source.units,
+            source_dtype=None,
+            values=values,
+            missing_value_mask=missing,
+            qc_variable=source.quality_control_name,
+            qc_source_dtype=None,
+            qc_flags=qc_values,
+            qc_missing_value_mask=qc_missing,
+            qc_flag_values=source.qc_flag_values,
+            qc_flag_meanings=source.qc_flag_meanings,
+            qc_conventions=source.qc_conventions,
+        ))
+
+    if not has_valid_measurement:
+        raise AllMissingObservationError(
+            f"profile {identity.platform_id!r}/{identity.cycle!r} has no valid "
+            "values for the requested variables")
+
+    return ObservationProfileProduct(
+        dataset_identity=descriptor.identity,
+        profile_identity=identity,
+        coordinates=_record_coordinate_metadata(
+            profile, descriptor),
+        spatial_reference=descriptor.spatial_reference,
+        provenance=descriptor.provenance,
+        source_indices=tuple(range(len(profile.depth_values))),
+        vertical_values=vertical,
+        vertical_missing_value_mask=vertical_missing,
+        timestamps=timestamps,
+        timestamp_missing_value_mask=timestamp_missing,
+        variables=tuple(requested),
+        coordinate_transform=OBSERVATION_RECORD_TRANSFORM,
+        mask_semantics=OBSERVATION_RECORD_MISSING_MASK,
     )

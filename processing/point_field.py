@@ -23,8 +23,8 @@ def _selected_flat_indices(point_count: int,
                  for position in range(maximum_points))
 
 
-def _physical_range(values: np.ndarray,
-                    missing_mask: np.ndarray) -> PhysicalRange:
+def physical_range(values: np.ndarray,
+                   missing_mask: np.ndarray) -> PhysicalRange:
     flat_values = np.asarray(values).reshape(-1)
     flat_mask = np.asarray(missing_mask, dtype=bool).reshape(-1)
     valid = flat_values[~flat_mask]
@@ -45,7 +45,7 @@ def build_sampled_scalar_point_field(
         subset: ScalarSubset,
         sampling: SamplingRequest) -> ScalarPointFieldProduct:
     """Build an auditable budget-limited product without inventing values."""
-    full_range = _physical_range(subset.values, subset.missing_value_mask)
+    full_range = physical_range(subset.values, subset.missing_value_mask)
     if full_range.valid_point_count == 0:
         raise AllMissingSubsetError(
             f"all {full_range.missing_point_count} selected cells of "
@@ -79,7 +79,7 @@ def build_sampled_scalar_point_field(
     )
     delivered_count = len(selected_flat)
     omitted_count = original_count - delivered_count
-    delivered_range = _physical_range(delivered_values, delivered_mask)
+    delivered_range = physical_range(delivered_values, delivered_mask)
 
     return ScalarPointFieldProduct(
         identity=subset.identity,

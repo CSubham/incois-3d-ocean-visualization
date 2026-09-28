@@ -11,9 +11,10 @@ from processing.domain import (
     SpatialReference,
 )
 from processing.errors import (
-    AllMissingObservationError, AllMissingSubsetError, EmptySubsetError,
-    GridValidationError, InvalidRequestError, ManagedDataUnavailableError,
-    ObservationIdentityError, ObservationValidationError,
+    AllMissingObservationError, AllMissingSubsetError, DepthSelectionError,
+    EmptySubsetError, GridValidationError, InvalidRequestError,
+    ManagedDataUnavailableError, ObservationIdentityError,
+    ObservationValidationError,
     ObservationVariableError, PointBudgetError, ProcessingError,
     TimeSelectionError, UnknownRequestError, VariableSelectionError,
     WorkLimitError,
@@ -25,16 +26,26 @@ from processing.execution import (
 from processing.point_field import (
     build_sampled_scalar_point_field, prepare_sampled_scalar_point_field,
 )
+from processing.depth_slice import (
+    DEPTH_POLICIES, EXACT_DEPTH_POLICY, LINEAR_DEPTH_POLICY,
+    SLICE_PRODUCT_TYPE, SLICE_SCHEMA_VERSION, DepthInterpolationMetadata,
+    DepthSliceData, DepthSliceDimensions, DepthSliceProduct,
+    DepthSliceSelection, build_depth_slice,
+)
 from processing.observation import (
     MARKER_PRODUCT_TYPE, MARKER_SCHEMA_VERSION, OBSERVATION_IDENTITY_TRANSFORM,
-    OBSERVATION_MISSING_MASK, PROFILE_PRODUCT_TYPE, PROFILE_SCHEMA_VERSION,
+    OBSERVATION_MISSING_MASK, OBSERVATION_RECORD_MISSING_MASK,
+    OBSERVATION_RECORD_TRANSFORM, PROFILE_PRODUCT_TYPE,
+    PROFILE_SCHEMA_VERSION,
     MarkerGroupingMetadata, ObservationCoordinateMetadata,
     ObservationCoordinateRoles, ObservationDatasetDescriptor,
     ObservationMarker, ObservationMarkerProduct, ObservationProfileIdentity,
     ObservationProfileProduct, ObservationProfileSelection,
-    ObservationProfileVariable, ObservationVertical, ObservationVerticalRange,
-    SkippedObservationProfile, build_observation_markers,
-    build_observation_profile,
+    ObservationProfileVariable, ObservationRecordDescriptor,
+    ObservationVertical,
+    ObservationVerticalRange, SkippedObservationProfile,
+    build_observation_markers, build_observation_markers_from_records,
+    build_observation_profile, build_observation_profile_from_record,
 )
 from processing.subsetter import subset_scalar_field
 
@@ -42,6 +53,7 @@ __all__ = [
     "IDENTITY_TRANSFORM", "MISSING_VALUE_MASK", "PRODUCT_SCHEMA_VERSION",
     "PRODUCT_TYPE", "SAMPLING_POLICY", "VERTICAL_POSITIVE",
     "AllMissingObservationError", "AllMissingSubsetError",
+    "DepthSelectionError",
     "CoordinateMetadata", "CoordinateRoles",
     "CoordinateTransform", "DatasetIdentity", "DepthBounds",
     "DimensionMetadata", "EmptySubsetError", "GeographicBounds",
@@ -57,15 +69,22 @@ __all__ = [
     "ManagedDataUnavailableError", "ProductBuilder", "ProductExecutor",
     "ProductJob", "ProductRequest", "UnknownRequestError", "WorkLimitError", "failure_for",
     "build_sampled_scalar_point_field", "prepare_sampled_scalar_point_field",
+    "DEPTH_POLICIES", "EXACT_DEPTH_POLICY", "LINEAR_DEPTH_POLICY",
+    "SLICE_PRODUCT_TYPE", "SLICE_SCHEMA_VERSION",
+    "DepthInterpolationMetadata", "DepthSliceData", "DepthSliceDimensions",
+    "DepthSliceProduct", "DepthSliceSelection", "build_depth_slice",
     "subset_scalar_field", "MARKER_PRODUCT_TYPE", "MARKER_SCHEMA_VERSION",
     "OBSERVATION_IDENTITY_TRANSFORM", "OBSERVATION_MISSING_MASK",
+    "OBSERVATION_RECORD_MISSING_MASK", "OBSERVATION_RECORD_TRANSFORM",
     "PROFILE_PRODUCT_TYPE", "PROFILE_SCHEMA_VERSION",
     "MarkerGroupingMetadata", "ObservationCoordinateMetadata",
     "ObservationCoordinateRoles", "ObservationDatasetDescriptor",
     "ObservationMarker", "ObservationMarkerProduct",
     "ObservationProfileIdentity", "ObservationProfileProduct",
     "ObservationProfileSelection", "ObservationProfileVariable",
+    "ObservationRecordDescriptor",
     "ObservationVertical", "ObservationVerticalRange",
     "SkippedObservationProfile",
-    "build_observation_markers", "build_observation_profile",
+    "build_observation_markers", "build_observation_markers_from_records",
+    "build_observation_profile", "build_observation_profile_from_record",
 ]

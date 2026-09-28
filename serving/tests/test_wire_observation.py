@@ -7,9 +7,15 @@ import json
 import numpy as np
 import pytest
 
+from ingestion.query import ProfileIdentity
+from ingestion.tests.query_support import PROFILE_VERSION_ID, in_memory_case
 from processing import (
-    ObservationProfileIdentity, ObservationProfileSelection,
+    DatasetIdentity, ObservationProfileIdentity, ObservationProfileSelection,
+    ObservationRecordDescriptor, SpatialReference,
     build_observation_markers, build_observation_profile,
+)
+from processing.managed import (
+    ManagedObservationProfileRequest, managed_observation_profile_builder,
 )
 from processing.tests import observation_fixtures as fixtures
 from serving import wire_observation
@@ -146,3 +152,34 @@ def test_glider_qc_vocabulary_is_declared_in_the_wire_descriptor():
     assert variable["qc_flag_values"] == ["GOOD", "SUSPECT"]
     assert variable["qc_flag_meanings"] == "good_data suspect_data"
     assert variable["qc_conventions"] == "IOOS QARTOD"
+
+
+def test_s3_record_profile_uses_the_same_wire_format_with_absent_dtypes():
+    descriptor = ObservationRecordDescriptor(
+        identity=DatasetIdentity("Indian_ARGO_Floats", PROFILE_VERSION_ID),
+        spatial_reference=SpatialReference(
+            crs="EPSG:4326", vertical_positive="down"),
+        vertical_kind="depth",
+        provenance={"import_id": PROFILE_VERSION_ID},
+    )
+    product = managed_observation_profile_builder(
+        in_memory_case().query, {PROFILE_VERSION_ID: descriptor})(
+            ManagedObservationProfileRequest(
+                identity=ProfileIdentity(
+                    PROFILE_VERSION_ID, "7902250", "12"),
+                variables=("TEMP",),
+            ))
+
+    layout, buffer = wire_observation.encode(product)
+    arrays = wire_observation.decode(layout, buffer)
+    described = wire_observation.describe(product, data_url=None)
+
+    np.testing.assert_array_equal(arrays["variable_0_values"], [28.0, 27.5])
+    assert wire_observation.decode_text(
+        layout, buffer, "variable_0_qc") == ("1", "2")
+    variable = described["product"]["variables"][0]
+    assert variable["source_dtype"] is None
+    assert variable["qc_source_dtype"] is None
+    assert variable["qc_flag_values"] == [1, 2]
+    assert variable["qc_flag_meanings"] == "good_data bad_data"
+    assert variable["qc_conventions"] == "fixture QC table 1"

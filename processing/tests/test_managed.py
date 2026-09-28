@@ -11,10 +11,11 @@ from ingestion.query_memory import InMemoryModelFieldQuery
 from ingestion.storage.query import CatalogueModelFieldQuery
 from ingestion.tests.query_support import MODEL_VERSION_ID, in_memory_case
 from processing import (
-    DepthBounds, GeographicBounds, SamplingRequest, ScalarSelection,
-    TimeSelectionError,
+    DepthBounds, DepthSliceSelection, GeographicBounds, SamplingRequest,
+    ScalarSelection, TimeSelectionError,
 )
 from processing.managed import (
+    ManagedDepthSliceRequest, managed_depth_slice_builder,
     prepare_managed_scalar_point_field, scalar_grid_descriptor,
 )
 
@@ -131,6 +132,26 @@ def test_the_managed_builder_honours_the_work_ceiling_before_reading():
                         maximum_points=100, maximum_cells=1).submit(_request())
 
     assert job.failure.code == "work_limit"
+
+
+def test_managed_depth_slice_builder_uses_the_s3_field_boundary():
+    builder = managed_depth_slice_builder(in_memory_case().query)
+
+    product = builder(ManagedDepthSliceRequest(
+        dataset_version_id=MODEL_VERSION_ID,
+        selection=DepthSliceSelection(
+            variable="water_temp",
+            time=np.datetime64("2026-09-28T00:00:00", "ns"),
+            area=GeographicBounds(
+                west=72.0, east=75.0, south=8.0, north=9.0),
+            depth=10.0,
+        ),
+        maximum_cells=100,
+    ))
+
+    assert product.identity.dataset_version_id == MODEL_VERSION_ID
+    assert product.interpolation.source_depth_indices == (1,)
+    assert product.data.values.shape == (2, 4)
 
 
 @pytest.mark.parametrize("request_kwargs, code", [

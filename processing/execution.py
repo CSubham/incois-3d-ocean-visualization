@@ -20,16 +20,16 @@ from collections import OrderedDict
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Callable, Optional
+from typing import Optional, Protocol, TypeVar
 
 from processing.domain import (
     SamplingRequest, ScalarPointFieldProduct, ScalarSelection,
 )
 from processing.errors import (
-    AllMissingSubsetError, EmptySubsetError, GridValidationError,
-    InvalidRequestError, ManagedDataUnavailableError, PointBudgetError,
-    TimeSelectionError, UnknownRequestError, VariableSelectionError,
-    WorkLimitError,
+    AllMissingSubsetError, DepthSelectionError, EmptySubsetError,
+    GridValidationError, InvalidRequestError, ManagedDataUnavailableError,
+    PointBudgetError, TimeSelectionError, UnknownRequestError,
+    VariableSelectionError, WorkLimitError,
 )
 
 log = logging.getLogger(__name__)
@@ -69,10 +69,19 @@ class ProductRequest:
                 > self.sampling.maximum_points)
 
 
-#: Builds the product for a request. Bound at composition to the storage read
-#: path; it must pass ``request.maximum_cells`` to the subsetter and raises
-#: ProcessingError subclasses for anything the caller can act on.
-ProductBuilder = Callable[[ProductRequest], ScalarPointFieldProduct]
+RequestT = TypeVar("RequestT", contravariant=True)
+ProductT = TypeVar("ProductT", covariant=True)
+
+
+class ProductBuilder(Protocol[RequestT, ProductT]):
+    """Build one product from a transport-neutral request.
+
+    Composition binds implementations to S3 reads. Concrete executors narrow
+    this generic callable to the request and product families they support.
+    """
+
+    def __call__(self, request: RequestT) -> ProductT:
+        """Build the requested product or raise a typed processing failure."""
 
 
 class JobState(str, Enum):
@@ -101,6 +110,7 @@ _FAILURE_CODES: tuple[tuple[type[Exception], str], ...] = (
     (InvalidRequestError, "invalid_request"),
     (VariableSelectionError, "variable_unavailable"),
     (TimeSelectionError, "time_unavailable"),
+    (DepthSelectionError, "depth_unavailable"),
     (GridValidationError, "unsupported_grid"),
     (EmptySubsetError, "empty_subset"),
     (AllMissingSubsetError, "all_missing"),
@@ -174,7 +184,10 @@ class LocalExecutor(ProductExecutor):
     nothing else.
     """
 
-    def __init__(self, builder: ProductBuilder, maximum_points: int,
+    def __init__(self,
+                 builder: ProductBuilder[ProductRequest,
+                                         ScalarPointFieldProduct],
+                 maximum_points: int,
                  maximum_cells: int, retained_jobs: int = 256) -> None:
         if min(maximum_points, maximum_cells, retained_jobs) < 1:
             raise ValueError("maximum_points, maximum_cells and retained_jobs "

@@ -19,6 +19,10 @@ class TimeSelectionError(ProcessingError):
     """The requested time does not identify exactly one source time."""
 
 
+class DepthSelectionError(ProcessingError):
+    """The requested slice depth cannot be selected by its declared policy."""
+
+
 class GridValidationError(ProcessingError):
     """The supplied data is not an unambiguous rectilinear scalar grid."""
 
