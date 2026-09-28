@@ -64,6 +64,14 @@ describe("S7 state", () => {
     expect(s.lowerDensityRetry).toEqual({ from: 200_000, to: 50_000 });
   });
 
+  it("tracks the sample under the pointer and clears it on a new field", () => {
+    const sample = { longitude: 85, latitude: 12, depth: 50, value: 28.4 };
+    let s = reducer(loaded(), { type: "rendererEvent", event: { type: "hover", sample } });
+    expect(s.hovered).toEqual(sample);
+    s = reducer(s, { type: "rendererEvent", event: { type: "ready", shownPoints: 10, hiddenMissingPoints: 2 } });
+    expect(s.hovered).toBeNull();
+  });
+
   it("reports a failed request and an unsupported renderer", () => {
     const failed: RequestView = { ...succeeded(0, 1), state: "failed", product: null, failure: { code: "work_limit", message: "too big" } };
     expect(reducer(loaded(), { type: "requestFinished", view: failed }).request)

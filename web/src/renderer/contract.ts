@@ -23,8 +23,17 @@ export interface RendererCapabilities {
   maximumPoints: number;
 }
 
+/** One source cell under the pointer, in physical terms. */
+export interface PointSample {
+  longitude: number;
+  latitude: number;
+  depth: number;
+  value: number;
+}
+
 export type RendererEvent =
   | { type: "ready"; shownPoints: number; hiddenMissingPoints: number }
+  | { type: "hover"; sample: PointSample | null }
   | { type: "unsupported"; reason: string }
   | { type: "resource"; reason: string; retryWithPoints: number }
   | { type: "error"; reason: string };

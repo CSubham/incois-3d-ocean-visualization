@@ -6,7 +6,7 @@
 
 import type { Budget, CatalogueVersion, Failure, RequestView } from "../api/client";
 import type { ProductDescriptor } from "../api/wire";
-import type { DisplayState, RendererEvent } from "../renderer/contract";
+import type { DisplayState, PointSample, RendererEvent } from "../renderer/contract";
 import { suggestedExaggeration } from "../renderer/transform";
 
 export interface Selection {
@@ -39,6 +39,7 @@ export interface State {
   budget: Budget | null;
   lowerDensityRetry: { from: number; to: number } | null;
   shown: { points: number; hiddenMissing: number } | null;
+  hovered: PointSample | null;
   display: Display;
   renderer: { phase: "ok" | "unsupported" | "error"; reason?: string };
   rendererMaximumPoints: number;
@@ -67,6 +68,7 @@ export function initialState(rendererMaximumPoints: number): State {
     budget: null,
     lowerDensityRetry: null,
     shown: null,
+    hovered: null,
     display: {
       palette: "thermal", range: { minimum: 0, maximum: 1 }, scale: "linear",
       opacity: 1, verticalExaggeration: 100,
@@ -158,8 +160,9 @@ export function reducer(state: State, action: Action): State {
     case "rendererEvent": {
       const { event } = action;
       if (event.type === "ready") {
-        return { ...state, shown: { points: event.shownPoints, hiddenMissing: event.hiddenMissingPoints } };
+        return { ...state, shown: { points: event.shownPoints, hiddenMissing: event.hiddenMissingPoints }, hovered: null };
       }
+      if (event.type === "hover") return { ...state, hovered: event.sample };
       if (event.type === "unsupported") return { ...state, renderer: { phase: "unsupported", reason: event.reason } };
       if (event.type === "error") return { ...state, renderer: { phase: "error", reason: event.reason } };
       // A resource event lowers the budget; the controller re-requests.

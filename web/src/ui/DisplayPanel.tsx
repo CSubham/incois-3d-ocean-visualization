@@ -1,8 +1,10 @@
 // Palette, range, scale, opacity and vertical exaggeration as persistent
 // renderer state (IMAP s7-display-controls). No change here reprocesses data.
 
+import { Anchor, Button, Fieldset, Group, NumberInput, SegmentedControl, Select, Slider, Stack, Text, Title, Tooltip } from "@mantine/core";
+
 import type { Range } from "../api/wire";
-import { logScaleProblem, PALETTES } from "../renderer/colour";
+import { cssGradient, logScaleProblem, PALETTES } from "../renderer/colour";
 import type { PaletteName, ScaleKind } from "../renderer/contract";
 import type { Display } from "../state/store";
 
@@ -15,69 +17,52 @@ interface Props {
   onResetCamera: () => void;
 }
 
-const EXAGGERATION_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+const EXAGGERATION = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
 
 export function DisplayPanel({ display, fullSubsetRange, enabled, onChange, onUseFullSubsetRange, onResetCamera }: Props) {
   const logProblem = logScaleProblem(display.range.minimum, display.range.maximum);
-  const stepIndex = EXAGGERATION_STEPS.reduce((best, v, i) =>
-    Math.abs(v - display.verticalExaggeration) < Math.abs(EXAGGERATION_STEPS[best] - display.verticalExaggeration) ? i : best, 0);
+  const stepIndex = EXAGGERATION.reduce((best, v, i) =>
+    Math.abs(v - display.verticalExaggeration) < Math.abs(EXAGGERATION[best] - display.verticalExaggeration) ? i : best, 0);
+  const setRange = (key: "minimum" | "maximum") => (value: string | number) => {
+    if (typeof value === "number" && Number.isFinite(value)) onChange({ range: { ...display.range, [key]: value } });
+  };
   return (
-    <section className="panel" aria-label="Display">
-      <h2>Display</h2>
-      <fieldset disabled={!enabled}>
-        <label className="field wide">
-          <span>Palette</span>
-          <select value={display.palette} onChange={(e) => onChange({ palette: e.target.value as PaletteName })}>
-            {PALETTES.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-        </label>
-        <div className="grid">
-          <label className="field">
-            <span>Range min</span>
-            <input type="number" step="any" value={round(display.range.minimum)}
-              onChange={(e) => Number.isFinite(e.target.valueAsNumber) && onChange({ range: { ...display.range, minimum: e.target.valueAsNumber } })} />
-          </label>
-          <label className="field">
-            <span>Range max</span>
-            <input type="number" step="any" value={round(display.range.maximum)}
-              onChange={(e) => Number.isFinite(e.target.valueAsNumber) && onChange({ range: { ...display.range, maximum: e.target.valueAsNumber } })} />
-          </label>
-        </div>
-        <p className="hint">
-          {display.rangeSource === "full-subset"
-            ? "Range: full selected subset, before sampling."
-            : "Range: custom."}{" "}
-          {display.rangeSource === "custom" && fullSubsetRange?.minimum !== null && (
-            <button className="link" onClick={onUseFullSubsetRange}>Use full-subset range</button>
-          )}
-        </p>
-        <div className="segmented" role="radiogroup" aria-label="Colour scale">
-          {(["linear", "log"] as ScaleKind[]).map((scale) => (
-            <label key={scale} title={scale === "log" && logProblem ? logProblem : undefined}>
-              <input type="radio" name="scale" value={scale} checked={display.scale === scale}
-                disabled={scale === "log" && logProblem !== null}
-                onChange={() => onChange({ scale })} />
-              {scale === "linear" ? "Linear" : "Logarithmic"}
-            </label>
-          ))}
-        </div>
-        {logProblem && <p className="hint">Logarithmic scale unavailable: {logProblem}.</p>}
-        <label className="field wide">
-          <span>Opacity {Math.round(display.opacity * 100)}%</span>
-          <input type="range" min={0.05} max={1} step={0.05} value={display.opacity}
-            onChange={(e) => onChange({ opacity: e.target.valueAsNumber })} />
-        </label>
-        <label className="field wide">
-          <span>Vertical exaggeration ×{display.verticalExaggeration}</span>
-          <input type="range" min={0} max={EXAGGERATION_STEPS.length - 1} step={1} value={stepIndex}
-            onChange={(e) => onChange({ verticalExaggeration: EXAGGERATION_STEPS[e.target.valueAsNumber] })} />
-        </label>
-        <button onClick={onResetCamera}>Reset view</button>
-      </fieldset>
-    </section>
+    <Stack gap="sm" component="section" aria-label="Display">
+      <Title order={2} size="h6" tt="uppercase" c="dimmed">Display</Title>
+      <Fieldset variant="unstyled" disabled={!enabled}>
+        <Stack gap="sm">
+          <Select label="Palette" value={display.palette} allowDeselect={false}
+            data={PALETTES.map((p) => ({ value: p, label: p }))}
+            onChange={(v) => v && onChange({ palette: v as PaletteName })}
+            leftSection={<div className="colour-bar" style={{ width: 16, background: cssGradient(display.palette) }} />} />
+          <Group grow gap="xs">
+            <NumberInput label="Range min" value={display.range.minimum} decimalScale={3} onChange={setRange("minimum")} />
+            <NumberInput label="Range max" value={display.range.maximum} decimalScale={3} onChange={setRange("maximum")} />
+          </Group>
+          <Text size="xs" c="dimmed">
+            {display.rangeSource === "full-subset" ? "Range of the full selected subset, before sampling." : "Custom range."}{" "}
+            {display.rangeSource === "custom" && fullSubsetRange?.minimum != null && (
+              <Anchor component="button" size="xs" onClick={onUseFullSubsetRange}>Use full-subset range</Anchor>
+            )}
+          </Text>
+          <Tooltip label={logProblem ?? ""} disabled={!logProblem} position="right">
+            <SegmentedControl fullWidth value={display.scale} aria-label="Colour scale"
+              onChange={(v) => onChange({ scale: v as ScaleKind })}
+              data={[{ value: "linear", label: "Linear" }, { value: "log", label: "Logarithmic", disabled: logProblem !== null }]} />
+          </Tooltip>
+          <div>
+            <Text size="sm" fw={500}>Opacity <Text span c="dimmed" size="sm">{Math.round(display.opacity * 100)}%</Text></Text>
+            <Slider aria-label="Opacity" min={0.05} max={1} step={0.05} value={display.opacity}
+              onChange={(opacity) => onChange({ opacity })} label={(v) => `${Math.round(v * 100)}%`} />
+          </div>
+          <div>
+            <Text size="sm" fw={500}>Vertical exaggeration <Text span c="dimmed" size="sm">×{display.verticalExaggeration}</Text></Text>
+            <Slider aria-label="Vertical exaggeration" min={0} max={EXAGGERATION.length - 1} step={1} value={stepIndex}
+              label={(i) => `×${EXAGGERATION[i]}`} onChange={(i) => onChange({ verticalExaggeration: EXAGGERATION[i] })} />
+          </div>
+          <Button variant="light" onClick={onResetCamera}>Fly to region</Button>
+        </Stack>
+      </Fieldset>
+    </Stack>
   );
-}
-
-function round(value: number): number {
-  return Math.round(value * 1000) / 1000;
 }

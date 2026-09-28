@@ -2,10 +2,12 @@
 // Feature modules receive a DataClient and a RendererFactory, never a
 // transport or an engine.
 
+import "@mantine/core/styles.css";
+import { createTheme, MantineProvider } from "@mantine/core";
 import { createRoot } from "react-dom/client";
 
 import { HttpDataClient } from "./api/client";
-import { ThreeRenderer } from "./renderer/three/ThreeRenderer";
+import { CesiumRenderer } from "./renderer/cesium/CesiumRenderer";
 import { App } from "./ui/App";
 import "./ui/styles.css";
 
@@ -13,9 +15,13 @@ import "./ui/styles.css";
 // budget replaces it (IMAP s6-point-field-budget).
 const RENDERER_MAXIMUM_POINTS = 500_000;
 
+const theme = createTheme({ primaryColor: "cyan", defaultRadius: "sm" });
+
 createRoot(document.getElementById("root")!).render(
-  <App
-    client={new HttpDataClient()}
-    createRenderer={() => new ThreeRenderer(RENDERER_MAXIMUM_POINTS)}
-  />,
+  <MantineProvider theme={theme} defaultColorScheme="dark">
+    <App
+      client={new HttpDataClient()}
+      createRenderer={() => new CesiumRenderer(RENDERER_MAXIMUM_POINTS)}
+    />
+  </MantineProvider>,
 );

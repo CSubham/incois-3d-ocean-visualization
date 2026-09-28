@@ -1,6 +1,8 @@
 // Loading, failure and unsupported states (IMAP s7-visible-failures):
 // never a blank or silently stale view.
 
+import { Alert, Group, Loader, Paper, Text } from "@mantine/core";
+
 import type { State } from "../state/store";
 
 interface Props {
@@ -11,17 +13,25 @@ interface Props {
 }
 
 export function StatusBanner({ catalogue, request, renderer, hasProduct }: Props) {
-  let tone: "info" | "error" = "info";
-  let text: string | null = null;
-  if (renderer.phase === "unsupported") { tone = "error"; text = `3D view unavailable: ${renderer.reason}`; }
-  else if (renderer.phase === "error") { tone = "error"; text = `Display problem: ${renderer.reason}`; }
-  else if (request.phase === "loading") text = request.retryFrom ? "Preparing a lower-density field…" : "Preparing the field…";
-  else if (request.phase === "failed") {
-    tone = "error";
-    text = `${request.failure.message}${hasProduct ? " — the previous field is still shown." : ""}`;
+  if (renderer.phase === "unsupported") return <Alert color="red" title="3D view unavailable" role="alert">{renderer.reason}</Alert>;
+  if (renderer.phase === "error") return <Alert color="red" title="Display problem" role="alert">{renderer.reason}</Alert>;
+  if (request.phase === "loading") {
+    return (
+      <Paper px="md" py={8} withBorder shadow="md" role="status">
+        <Group gap="sm"><Loader size="xs" /><Text size="sm">{request.retryFrom ? "Preparing a lower-density field…" : "Preparing the field…"}</Text></Group>
+      </Paper>
+    );
   }
-  else if (catalogue.phase === "failed") { tone = "error"; text = catalogue.message ?? "The catalogue could not be read."; }
-  else if (!hasProduct && catalogue.phase === "ready") text = "Choose a selection and press Show field.";
-  if (!text) return null;
-  return <div className={`status ${tone}`} role={tone === "error" ? "alert" : "status"}>{text}</div>;
+  if (request.phase === "failed") {
+    return (
+      <Alert color="red" title="The field could not be shown" role="alert">
+        {request.failure.message}{hasProduct ? " The previous field is still shown." : ""}
+      </Alert>
+    );
+  }
+  if (catalogue.phase === "failed") return <Alert color="red" title="Catalogue unavailable" role="alert">{catalogue.message}</Alert>;
+  if (!hasProduct && catalogue.phase === "ready") {
+    return <Paper px="md" py={8} withBorder shadow="md" role="status"><Text size="sm">Choose a selection and press Show field.</Text></Paper>;
+  }
+  return null;
 }
