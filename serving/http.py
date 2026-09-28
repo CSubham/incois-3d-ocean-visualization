@@ -8,11 +8,14 @@ composition point decides what it is wired to.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
-from typing import Any
+from pathlib import Path
+from typing import Any, Protocol, Sequence
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from processing import JobState, ProductJob
@@ -23,6 +26,14 @@ from serving.coordinator import (
 )
 
 API = "/api/v1"
+
+log = logging.getLogger(__name__)
+
+
+class Catalogue(Protocol):
+    """The S3 catalogue read S5 exposes. Entries are dataclasses."""
+
+    def list_model_versions(self) -> Sequence[Any]: ...
 
 
 class Strict(BaseModel):
@@ -70,7 +81,11 @@ def _view(job: ProductJob) -> dict[str, Any]:
     }
 
 
-def create_app(coordinator: RequestCoordinator) -> FastAPI:
+def create_app(coordinator: RequestCoordinator,
+               catalogue: Catalogue | None = None,
+               web_root: Path | None = None) -> FastAPI:
+    """The HTTP surface. ``web_root``, when given, serves the browser app
+    from the same origin, so no cross-origin access is ever opened."""
     app = FastAPI(title="Ocean data serving", version="1.0")
 
     @app.get("/health")
@@ -81,6 +96,21 @@ def create_app(coordinator: RequestCoordinator) -> FastAPI:
     def capabilities() -> dict[str, Any]:
         return {"wire_format": wire.WIRE_FORMAT,
                 "executor": asdict(coordinator.capabilities)}
+
+    @app.get(f"{API}/catalogue")
+    def model_catalogue() -> dict[str, Any]:
+        if catalogue is None:
+            raise HTTPException(status_code=503, detail={
+                "code": "catalogue_unavailable",
+                "message": "no catalogue is configured"})
+        try:
+            versions = catalogue.list_model_versions()
+        except Exception as exc:
+            log.exception("catalogue listing failed")
+            raise HTTPException(status_code=503, detail={
+                "code": "catalogue_unavailable",
+                "message": "the model catalogue could not be read"}) from exc
+        return {"versions": [wire.plain(version) for version in versions]}
 
     @app.post(f"{API}/point-fields", status_code=202)
     def request_point_field(body: PointFieldBody) -> JSONResponse:
@@ -116,4 +146,6 @@ def create_app(coordinator: RequestCoordinator) -> FastAPI:
         return Response(content=buffer, media_type=wire.MEDIA_TYPE,
                         headers={"X-Wire-Format": wire.WIRE_FORMAT})
 
+    if web_root is not None:
+        app.mount("/", StaticFiles(directory=web_root, html=True), name="web")
     return app

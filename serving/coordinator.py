@@ -9,6 +9,7 @@ finished product -- never a renderer object and never a storage detail.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -58,20 +59,20 @@ class PointFieldIntent:
 
 
 def _instant(text: str) -> np.datetime64:
-    """An ISO 8601 instant. A trailing Z is UTC; any other offset is refused."""
-    value = text.strip()
-    if value.endswith(("Z", "z")):
-        value = value[:-1]
-    if "+" in value[10:] or value[10:].count("-") > 0:
-        raise RequestRejected(
-            "invalid_request",
-            f"time {text!r} carries a UTC offset; give it in UTC")
+    """An ISO 8601 instant as naive UTC, the form decoded source times take.
+
+    An explicit offset is converted, not refused: the catalogue itself writes
+    UTC as ``+00:00``. A time without an offset is taken as UTC.
+    """
     try:
-        return np.datetime64(value, "ns")
+        parsed = datetime.fromisoformat(text.strip())
     except ValueError as exc:
         raise RequestRejected(
             "invalid_request", f"time {text!r} is not an ISO 8601 instant"
         ) from exc
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return np.datetime64(parsed, "ns")
 
 
 class RequestCoordinator:

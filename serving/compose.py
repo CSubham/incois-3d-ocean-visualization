@@ -4,20 +4,29 @@ Configured by environment. Core modules receive what is built here and never
 choose for themselves, so a worker executor or another entry adapter replaces
 one line here rather than a branch inside the workflow.
 
-The product builder is the binding to the storage read path. It is supplied
-by the caller until that path exists (s3-query-contracts); then it is built
-here from the same environment.
+`build_app` takes the product builder and catalogue explicitly, for tests
+and alternative bindings. `create_default_app` binds both to the configured
+S3 reads; it is the deployable entry point:
+
+    uvicorn serving.compose:create_default_app --factory
+
+Storage modules are imported only inside it, so importing this module loads
+no storage driver.
 """
 
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from fastapi import FastAPI
 
 from processing import LocalExecutor, ProductBuilder
 from serving.coordinator import RequestCoordinator
-from serving.http import create_app
+from serving.http import Catalogue, create_app
+
+#: The built browser app, served from the same origin when present.
+DEFAULT_WEB_ROOT = Path(__file__).resolve().parents[1] / "web" / "dist"
 
 #: Server-side ceilings. They protect the service; neither is a tested
 #: browser budget, which S6 owns. Five million float32 cells is about 20 MB.
@@ -38,7 +47,15 @@ def _positive_int(name: str, default: int) -> int:
     return value
 
 
-def build_app(builder: ProductBuilder) -> FastAPI:
+def _web_root() -> Path | None:
+    raw = os.environ.get("SERVING_WEB_ROOT")
+    if raw is not None:
+        return Path(raw) if raw.strip() else None
+    return DEFAULT_WEB_ROOT if DEFAULT_WEB_ROOT.is_dir() else None
+
+
+def build_app(builder: ProductBuilder,
+              catalogue: Catalogue | None = None) -> FastAPI:
     executor = LocalExecutor(
         builder,
         maximum_points=_positive_int("SERVING_MAX_POINTS",
@@ -47,4 +64,13 @@ def build_app(builder: ProductBuilder) -> FastAPI:
                                     DEFAULT_MAXIMUM_CELLS),
         retained_jobs=_positive_int("SERVING_RETAINED_JOBS", 256),
     )
-    return create_app(RequestCoordinator(executor))
+    return create_app(RequestCoordinator(executor), catalogue, _web_root())
+
+
+def create_default_app() -> FastAPI:
+    """The deployable app: product builder and catalogue over S3 reads."""
+    from ingestion.composition import build_model_field_query
+    from processing.managed import managed_point_field_builder
+
+    query = build_model_field_query()
+    return build_app(managed_point_field_builder(query), catalogue=query)

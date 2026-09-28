@@ -99,3 +99,50 @@ def test_composition_selects_the_backend_only_from_configuration(tmp_path):
 def test_composition_rejects_an_unknown_backend():
     with pytest.raises(ValueError, match="catalogue.*memory"):
         build_model_field_query(environ={"S3_QUERY_BACKEND": "mystery"})
+
+
+def _request(variable="water_temp", version=MODEL_VERSION_ID, points=10):
+    from processing import ProductRequest
+    return ProductRequest(
+        dataset_version_id=version,
+        selection=ScalarSelection(
+            variable=variable, time=_selection().time,
+            area=_selection().area, depth=_selection().depth),
+        sampling=SamplingRequest(maximum_points=points))
+
+
+def test_the_managed_builder_runs_behind_the_executor():
+    from processing import JobState, LocalExecutor
+    from processing.managed import managed_point_field_builder
+
+    executor = LocalExecutor(managed_point_field_builder(in_memory_case().query),
+                             maximum_points=100, maximum_cells=10_000)
+    job = executor.submit(_request())
+
+    assert job.state is JobState.SUCCEEDED, job.failure
+    assert job.product.identity.dataset_version_id == MODEL_VERSION_ID
+
+
+def test_the_managed_builder_honours_the_work_ceiling_before_reading():
+    from processing import LocalExecutor
+    from processing.managed import managed_point_field_builder
+
+    job = LocalExecutor(managed_point_field_builder(in_memory_case().query),
+                        maximum_points=100, maximum_cells=1).submit(_request())
+
+    assert job.failure.code == "work_limit"
+
+
+@pytest.mark.parametrize("request_kwargs, code", [
+    ({"version": "no-such-version"}, "data_unavailable"),
+    ({"variable": "chlorophyll"}, "variable_unavailable"),
+])
+def test_s3_read_failures_become_actionable_codes(request_kwargs, code):
+    from processing import LocalExecutor
+    from processing.managed import managed_point_field_builder
+
+    job = LocalExecutor(managed_point_field_builder(in_memory_case().query),
+                        maximum_points=100, maximum_cells=10_000
+                        ).submit(_request(**request_kwargs))
+
+    assert job.failure.code == code

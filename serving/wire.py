@@ -62,16 +62,16 @@ def decode(layout: list[Mapping[str, Any]], buffer: bytes) -> dict[str, np.ndarr
     return decode_arrays(layout, buffer)
 
 
-def _plain(value: Any) -> Any:
+def plain(value: Any) -> Any:
     """JSON-ready form of product metadata. Non-finite floats become null."""
     if is_dataclass(value) and not isinstance(value, type):
-        return {f.name: _plain(getattr(value, f.name)) for f in fields(value)}
+        return {f.name: plain(getattr(value, f.name)) for f in fields(value)}
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, Mapping):
-        return {str(k): _plain(v) for k, v in value.items()}
+        return {str(k): plain(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, frozenset, set)):
-        return [_plain(v) for v in value]
+        return [plain(v) for v in value]
     if isinstance(value, np.datetime64):
         return str(np.datetime_as_string(value, unit="auto"))
     if isinstance(value, np.generic):
@@ -85,7 +85,7 @@ def describe(product: ScalarPointFieldProduct, *,
              data_url: str | None) -> dict[str, Any]:
     """The control-path descriptor: every scientific fact, no bulk arrays."""
     layout, buffer = encode(product)
-    metadata = {f.name: _plain(getattr(product, f.name))
+    metadata = {f.name: plain(getattr(product, f.name))
                 for f in fields(product) if f.name != "points"}
     metadata["sampling"].pop("selected_subset_flat_indices")
     return {

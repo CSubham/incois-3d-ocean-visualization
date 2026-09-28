@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import numpy as np
 import pytest
@@ -65,7 +65,6 @@ def test_a_product_is_requested_described_and_fetched_as_binary(client):
 
 @pytest.mark.parametrize("field, value, code", [
     ("time", "yesterday", "invalid_request"),
-    ("time", "2026-01-02T00:00:00+05:30", "invalid_request"),
     ("west", 170.0, "invalid_request"),
     ("maximum_points", 0, "point_budget"),
 ])
@@ -100,6 +99,17 @@ def test_a_selection_over_the_work_ceiling_fails_with_a_code():
 
     assert view["state"] == "failed"
     assert view["failure"]["code"] == "work_limit"
+
+
+@pytest.mark.parametrize("time", [
+    "2026-01-02T00:00:00Z", "2026-01-02T00:00:00+00:00",
+    "2026-01-02T05:30:00+05:30", "2026-01-02T00:00:00", "2026-01-02",
+])
+def test_every_spelling_of_the_same_utc_instant_selects_it(client, time):
+    view = client.post("/api/v1/point-fields",
+                       json={**BODY, "time": time}).json()
+
+    assert view["state"] == "succeeded", view["failure"]
 
 
 def test_unexpected_fields_are_refused(client):
@@ -193,3 +203,60 @@ def test_serving_loads_no_storage_driver_or_ingestion_code():
                             capture_output=True, text=True)
 
     assert result.stdout.strip() == "[]"
+
+
+@dataclass(frozen=True)
+class _Version:
+    id: str
+    variables: tuple[str, ...]
+
+
+class _Catalogue:
+    def __init__(self, versions=(), fail=False):
+        self.versions, self.fail = versions, fail
+
+    def list_model_versions(self):
+        if self.fail:
+            raise RuntimeError("postgresql://secret@db/incois is down")
+        return self.versions
+
+
+def _app(catalogue=None, web_root=None):
+    executor = LocalExecutor(fixtures.builder(), maximum_points=100,
+                             maximum_cells=1000)
+    return TestClient(create_app(RequestCoordinator(executor), catalogue,
+                                 web_root))
+
+
+def test_the_catalogue_lists_versions_as_plain_json():
+    client = _app(_Catalogue((_Version("import-1", ("water_temp",)),)))
+
+    assert client.get("/api/v1/catalogue").json() == {
+        "versions": [{"id": "import-1", "variables": ["water_temp"]}]}
+
+
+@pytest.mark.parametrize("catalogue", [None, _Catalogue(fail=True)])
+def test_an_unavailable_catalogue_is_reported_without_detail(catalogue):
+    response = _app(catalogue).get("/api/v1/catalogue")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "catalogue_unavailable"
+    assert "secret" not in response.text
+
+
+def test_the_browser_app_is_served_from_the_same_origin(tmp_path):
+    (tmp_path / "index.html").write_text("<title>ocean</title>")
+    client = _app(web_root=tmp_path)
+
+    assert "ocean" in client.get("/").text
+    assert client.get("/api/v1/capabilities").status_code == 200
+
+
+def test_the_default_app_binds_the_configured_s3_reads(monkeypatch):
+    monkeypatch.setenv("S3_QUERY_BACKEND", "memory")
+    monkeypatch.setenv("SERVING_WEB_ROOT", "")
+    client = TestClient(compose.create_default_app())
+
+    assert client.get("/api/v1/catalogue").json() == {"versions": []}
+    view = client.post("/api/v1/point-fields", json=BODY).json()
+    assert view["failure"]["code"] == "data_unavailable"
