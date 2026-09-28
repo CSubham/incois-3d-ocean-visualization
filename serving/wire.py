@@ -20,84 +20,46 @@ from typing import Any, Mapping
 import numpy as np
 
 from processing import ScalarPointFieldProduct
+from serving.wire_layout import (
+    MEDIA_TYPE, WireFormatError, decode_arrays, little_endian, pack_arrays,
+    unsigned_32,
+)
 
 WIRE_FORMAT = "s5.point-field-wire/1.0"
-MEDIA_TYPE = "application/octet-stream"
-_ALIGNMENT = 8
-
-#: dtypes every browser can view as a typed array without conversion.
-_VIEWABLE = {"f4", "f8", "i1", "i2", "i4", "u1", "u2", "u4"}
 
 #: Order of the components in each ``source_index`` row.
 SOURCE_INDEX_COMPONENTS = ("time", "depth", "latitude", "longitude")
 
 
-class WireFormatError(ValueError):
-    """A product cannot be expressed in this wire format without loss."""
-
-
-def _little_endian(name: str, array: np.ndarray) -> np.ndarray:
-    array = np.ascontiguousarray(array)
-    code = f"{array.dtype.kind}{array.dtype.itemsize}"
-    if code not in _VIEWABLE:
-        raise WireFormatError(
-            f"{name} has dtype {array.dtype}, which a browser cannot view "
-            "without conversion")
-    return array.astype(array.dtype.newbyteorder("<"), copy=False)
-
-
-def _unsigned_32(name: str, values: Any) -> np.ndarray:
-    array = np.asarray(values, dtype=np.int64)
-    if array.size and (array.min() < 0 or array.max() > np.iinfo(np.uint32).max):
-        raise WireFormatError(f"{name} does not fit in 32 bits")
-    return array.astype("<u4")
-
-
-def _arrays(product: ScalarPointFieldProduct) -> list[tuple[str, np.ndarray]]:
+def _arrays(product: ScalarPointFieldProduct
+            ) -> list[tuple[str, np.ndarray, dict[str, Any]]]:
     points = product.points
     source_index = np.array(
         [[index.time, index.depth, index.latitude, index.longitude]
          for index in points.source_indices], dtype=np.int64).reshape(-1)
     return [
-        ("longitude", _little_endian("longitude", points.longitude)),
-        ("latitude", _little_endian("latitude", points.latitude)),
-        ("depth", _little_endian("depth", points.depth)),
-        ("values", _little_endian("values", points.values)),
+        ("longitude", little_endian("longitude", points.longitude), {}),
+        ("latitude", little_endian("latitude", points.latitude), {}),
+        ("depth", little_endian("depth", points.depth), {}),
+        ("values", little_endian("values", points.values), {}),
         ("missing_value_mask",
-         np.asarray(points.missing_value_mask, dtype="<u1")),
-        ("source_index", _unsigned_32("source_index", source_index)),
+         np.asarray(points.missing_value_mask, dtype="<u1"), {}),
+        ("source_index", unsigned_32("source_index", source_index),
+         {"components": list(SOURCE_INDEX_COMPONENTS)}),
         ("selected_subset_flat_index",
-         _unsigned_32("selected_subset_flat_index",
-                      product.sampling.selected_subset_flat_indices)),
+         unsigned_32("selected_subset_flat_index",
+                     product.sampling.selected_subset_flat_indices), {}),
     ]
 
 
 def encode(product: ScalarPointFieldProduct) -> tuple[list[dict[str, Any]], bytes]:
     """The array layout and the one buffer it describes."""
-    layout: list[dict[str, Any]] = []
-    parts: list[bytes] = []
-    offset = 0
-    for name, array in _arrays(product):
-        padding = -offset % _ALIGNMENT
-        parts.append(b"\0" * padding)
-        offset += padding
-        data = array.tobytes(order="C")
-        entry = {"name": name, "dtype": array.dtype.str, "count": int(array.size),
-                 "byte_offset": offset, "byte_length": len(data)}
-        if name == "source_index":
-            entry["components"] = list(SOURCE_INDEX_COMPONENTS)
-        layout.append(entry)
-        parts.append(data)
-        offset += len(data)
-    return layout, b"".join(parts)
+    return pack_arrays(_arrays(product))
 
 
 def decode(layout: list[Mapping[str, Any]], buffer: bytes) -> dict[str, np.ndarray]:
     """Read a buffer back through its layout, as any client would."""
-    return {entry["name"]: np.frombuffer(
-                buffer, dtype=np.dtype(entry["dtype"]),
-                count=entry["count"], offset=entry["byte_offset"])
-            for entry in layout}
+    return decode_arrays(layout, buffer)
 
 
 def _plain(value: Any) -> Any:

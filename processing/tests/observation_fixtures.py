@@ -58,7 +58,15 @@ def argo() -> xr.Dataset:
                     ["7", "7", "7", "7", "8", "8", "8"], dtype=object)),
             "TEMP_QC": (
                 "observation", np.array(
-                    ["1", "4", None, "2", "1", "1", "3"], dtype=object)),
+                    ["1", "4", None, "2", "1", "1", "3"], dtype=object),
+                {
+                    "flag_values": np.array(["1", "2", "3", "4"]),
+                    "flag_meanings": (
+                        "good_data probably_good_data probably_bad_data "
+                        "bad_data"),
+                    "conventions": "Argo reference table 2",
+                },
+            ),
             "PSAL_QC": (
                 "observation", np.array(
                     ["1", "1", "1", "2", "1", "1", "1"], dtype=object)),
@@ -117,7 +125,13 @@ def glider() -> xr.Dataset:
             "profile_id": ("row", np.array([12, 12, 12, 12], dtype=np.int32)),
             "temperature_qc": (
                 "row", np.array(["GOOD", "GOOD", "SUSPECT", "GOOD"],
-                                dtype=object)),
+                                dtype=object),
+                {
+                    "flag_values": np.array(["GOOD", "SUSPECT"]),
+                    "flag_meanings": "good_data suspect_data",
+                    "conventions": "IOOS QARTOD",
+                },
+            ),
         },
     )
 

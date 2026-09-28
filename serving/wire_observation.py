@@ -18,32 +18,14 @@ import numpy as np
 from processing import (
     ObservationMarkerProduct, ObservationProfileProduct,
 )
-from serving.wire import MEDIA_TYPE, WireFormatError
+from serving.wire_layout import (
+    ArrayEntry, MEDIA_TYPE, WireFormatError, decode_arrays, little_endian,
+    pack_arrays, unsigned_32,
+)
 
 
 WIRE_FORMAT = "s5.observation-wire/1.0"
-_ALIGNMENT = 8
-_VIEWABLE = {"f4", "f8", "i1", "i2", "i4", "u1", "u2", "u4"}
-
 ObservationProduct = ObservationMarkerProduct | ObservationProfileProduct
-ArrayEntry = tuple[str, np.ndarray, dict[str, Any]]
-
-
-def _little_endian(name: str, array: np.ndarray) -> np.ndarray:
-    array = np.ascontiguousarray(array)
-    code = f"{array.dtype.kind}{array.dtype.itemsize}"
-    if code not in _VIEWABLE:
-        raise WireFormatError(
-            f"{name} has dtype {array.dtype}, which a browser cannot view "
-            "without conversion")
-    return array.astype(array.dtype.newbyteorder("<"), copy=False)
-
-
-def _unsigned_32(name: str, values: Any) -> np.ndarray:
-    array = np.asarray(values, dtype=np.int64)
-    if array.size and (array.min() < 0 or array.max() > np.iinfo(np.uint32).max):
-        raise WireFormatError(f"{name} does not fit in 32 bits")
-    return array.astype("<u4")
 
 
 def _text(value: Any) -> str:
@@ -79,7 +61,7 @@ def _text_entries(name: str, values: list[Any], *, role: str,
     common = {"text_column": name, "encoding": "utf-8-offsets", "role": role,
               **metadata}
     return [
-        (f"{name}_offsets", _unsigned_32(f"{name}_offsets", offsets),
+        (f"{name}_offsets", unsigned_32(f"{name}_offsets", offsets),
          {**common, "component": "offsets", "value_count": len(values)}),
         (f"{name}_utf8", payload,
          {**common, "component": "utf8", "value_count": len(values)}),
@@ -89,30 +71,30 @@ def _text_entries(name: str, values: list[Any], *, role: str,
 def _marker_arrays(product: ObservationMarkerProduct) -> list[ArrayEntry]:
     markers = product.markers
     arrays: list[ArrayEntry] = [
-        ("longitude", _little_endian(
+        ("longitude", little_endian(
             "longitude", np.asarray([marker.longitude for marker in markers])),
          {"role": "longitude"}),
-        ("latitude", _little_endian(
+        ("latitude", little_endian(
             "latitude", np.asarray([marker.latitude for marker in markers])),
          {"role": "latitude"}),
-        ("vertical_minimum", _little_endian(
+        ("vertical_minimum", little_endian(
             "vertical_minimum", np.asarray(
                 [marker.vertical_range.minimum for marker in markers])),
          {"role": "vertical_range_minimum"}),
-        ("vertical_maximum", _little_endian(
+        ("vertical_maximum", little_endian(
             "vertical_maximum", np.asarray(
                 [marker.vertical_range.maximum for marker in markers])),
          {"role": "vertical_range_maximum"}),
-        ("vertical_valid_count", _unsigned_32(
+        ("vertical_valid_count", unsigned_32(
             "vertical_valid_count",
             [marker.vertical_range.valid_observation_count for marker in markers]),
          {"role": "vertical_valid_observation_count"}),
-        ("vertical_missing_count", _unsigned_32(
+        ("vertical_missing_count", unsigned_32(
             "vertical_missing_count", [
                 marker.vertical_range.missing_observation_count
                 for marker in markers]),
          {"role": "vertical_missing_observation_count"}),
-        ("representative_source_index", _unsigned_32(
+        ("representative_source_index", unsigned_32(
             "representative_source_index",
             [marker.representative_source_index for marker in markers]),
          {"role": "representative_source_index"}),
@@ -133,10 +115,10 @@ def _marker_arrays(product: ObservationMarkerProduct) -> list[ArrayEntry]:
         flattened.extend(marker.source_indices)
         offsets.append(len(flattened))
     arrays += [
-        ("marker_source_index_offsets", _unsigned_32(
+        ("marker_source_index_offsets", unsigned_32(
             "marker_source_index_offsets", offsets),
          {"role": "marker_source_index_offsets", "value_count": len(markers)}),
-        ("marker_source_index", _unsigned_32(
+        ("marker_source_index", unsigned_32(
             "marker_source_index", flattened),
          {"role": "source_observation_index"}),
     ]
@@ -145,7 +127,7 @@ def _marker_arrays(product: ObservationMarkerProduct) -> list[ArrayEntry]:
 
 def _profile_arrays(product: ObservationProfileProduct) -> list[ArrayEntry]:
     arrays: list[ArrayEntry] = [
-        ("vertical", _little_endian("vertical", product.vertical_values),
+        ("vertical", little_endian("vertical", product.vertical_values),
          {"role": "vertical"}),
         ("vertical_missing_value_mask", np.asarray(
             product.vertical_missing_value_mask, dtype="<u1"),
@@ -153,7 +135,7 @@ def _profile_arrays(product: ObservationProfileProduct) -> list[ArrayEntry]:
         ("timestamp_missing_value_mask", np.asarray(
             product.timestamp_missing_value_mask, dtype="<u1"),
          {"role": "missing_value_mask", "for": "timestamp"}),
-        ("source_index", _unsigned_32(
+        ("source_index", unsigned_32(
             "source_index", product.source_indices),
          {"role": "source_observation_index"}),
     ]
@@ -165,7 +147,7 @@ def _profile_arrays(product: ObservationProfileProduct) -> list[ArrayEntry]:
     for position, variable in enumerate(product.variables):
         prefix = f"variable_{position}"
         arrays += [
-            (f"{prefix}_values", _little_endian(
+            (f"{prefix}_values", little_endian(
                 f"{prefix}_values", variable.values),
              {"role": "measurement", "variable": variable.name}),
             (f"{prefix}_missing_value_mask", np.asarray(
@@ -197,34 +179,13 @@ def _arrays(product: ObservationProduct) -> list[ArrayEntry]:
 
 def encode(product: ObservationProduct) -> tuple[list[dict[str, Any]], bytes]:
     """Return the declared array layout and its one binary buffer."""
-    layout: list[dict[str, Any]] = []
-    parts: list[bytes] = []
-    offset = 0
-    for name, array, metadata in _arrays(product):
-        padding = -offset % _ALIGNMENT
-        parts.append(b"\0" * padding)
-        offset += padding
-        data = np.ascontiguousarray(array).tobytes(order="C")
-        layout.append({
-            "name": name,
-            "dtype": array.dtype.str,
-            "count": int(array.size),
-            "byte_offset": offset,
-            "byte_length": len(data),
-            **metadata,
-        })
-        parts.append(data)
-        offset += len(data)
-    return layout, b"".join(parts)
+    return pack_arrays(_arrays(product))
 
 
 def decode(layout: list[Mapping[str, Any]], buffer: bytes
            ) -> dict[str, np.ndarray]:
     """Read numeric layout entries back without interpreting their roles."""
-    return {entry["name"]: np.frombuffer(
-                buffer, dtype=np.dtype(entry["dtype"]),
-                count=entry["count"], offset=entry["byte_offset"])
-            for entry in layout}
+    return decode_arrays(layout, buffer)
 
 
 def decode_text(layout: list[Mapping[str, Any]], buffer: bytes,

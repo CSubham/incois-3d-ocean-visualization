@@ -178,11 +178,25 @@ class ObservationMarker:
 
 
 @dataclass(frozen=True)
+class SkippedObservationProfile:
+    identity: ObservationProfileIdentity
+    source_indices: tuple[int, ...]
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not self.source_indices:
+            raise ValueError("a skipped profile must identify its source rows")
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("a skipped profile needs an actionable reason")
+
+
+@dataclass(frozen=True)
 class MarkerGroupingMetadata:
     grouping_keys: tuple[str, str]
     representative_policy: str
     original_observation_count: int
     delivered_marker_count: int
+    skipped_profile_count: int
 
 
 @dataclass(frozen=True)
@@ -193,6 +207,7 @@ class ObservationMarkerProduct:
     provenance: Mapping[str, Any]
     grouping: MarkerGroupingMetadata
     markers: tuple[ObservationMarker, ...]
+    skipped_profiles: tuple[SkippedObservationProfile, ...]
     coordinate_transform: CoordinateTransform = OBSERVATION_IDENTITY_TRANSFORM
     mask_semantics: MaskSemantics = OBSERVATION_MISSING_MASK
     schema_version: str = field(default=MARKER_SCHEMA_VERSION, init=False)
@@ -216,6 +231,9 @@ class ObservationProfileVariable:
     qc_source_dtype: str | None = None
     qc_flags: np.ndarray | None = None
     qc_missing_value_mask: np.ndarray | None = None
+    qc_flag_values: tuple[str | int | float | bool, ...] | None = None
+    qc_flag_meanings: str | None = None
+    qc_conventions: str | None = None
 
     def __post_init__(self) -> None:
         values = np.asarray(self.values)
@@ -238,6 +256,14 @@ class ObservationProfileVariable:
             object.__setattr__(self, "qc_flags", _readonly_array(qc_flags))
             object.__setattr__(self, "qc_missing_value_mask",
                                _readonly_array(qc_mask.astype(bool)))
+        qc_metadata = (self.qc_flag_values, self.qc_flag_meanings,
+                       self.qc_conventions)
+        if self.qc_variable is None and any(value is not None
+                                            for value in qc_metadata):
+            raise ValueError("QC vocabulary metadata requires a QC variable")
+        if self.qc_flag_values is not None:
+            object.__setattr__(self, "qc_flag_values",
+                               tuple(self.qc_flag_values))
 
 
 @dataclass(frozen=True)
@@ -324,7 +350,55 @@ def _identity_text(value: Any) -> str:
         except UnicodeDecodeError as exc:
             raise ObservationIdentityError(
                 "an observation identity is not valid UTF-8") from exc
+    if isinstance(value, float) and np.isfinite(value) and value.is_integer():
+        return str(int(value))
     return str(value)
+
+
+def _qc_scalar(variable: xr.DataArray, attribute: str, value: Any
+               ) -> str | int | float | bool:
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ObservationValidationError(
+                f"QC attribute {attribute!r} on {variable.name!r} is not "
+                "valid UTF-8") from exc
+    if not isinstance(value, (str, int, float, bool)):
+        raise ObservationValidationError(
+            f"QC attribute {attribute!r} on {variable.name!r} must contain "
+            "scalar text, numbers or booleans")
+    if isinstance(value, float) and not np.isfinite(value):
+        raise ObservationValidationError(
+            f"QC attribute {attribute!r} on {variable.name!r} contains a "
+            "non-finite value")
+    return value
+
+
+def _qc_flag_values(variable: xr.DataArray
+                    ) -> tuple[str | int | float | bool, ...] | None:
+    if "flag_values" not in variable.attrs:
+        return None
+    values = np.asarray(variable.attrs["flag_values"], dtype=object)
+    if values.ndim > 1:
+        raise ObservationValidationError(
+            f"QC attribute 'flag_values' on {variable.name!r} must be a "
+            "scalar or vector")
+    flattened = values.reshape(-1)
+    return tuple(_qc_scalar(variable, "flag_values", value)
+                 for value in flattened)
+
+
+def _optional_qc_text(variable: xr.DataArray, attribute: str) -> str | None:
+    if attribute not in variable.attrs:
+        return None
+    value = _qc_scalar(variable, attribute, variable.attrs[attribute])
+    if not isinstance(value, str):
+        raise ObservationValidationError(
+            f"QC attribute {attribute!r} on {variable.name!r} must be text")
+    return value
 
 
 def _identity_columns(dataset: xr.Dataset, descriptor: ObservationDatasetDescriptor
@@ -421,20 +495,29 @@ def build_observation_markers(
     timestamps, timestamp_mask = _values_and_mask(coordinates["time"])
 
     markers: list[ObservationMarker] = []
+    skipped: list[SkippedObservationProfile] = []
     for (platform, cycle), source_indices in groups.items():
         complete = [index for index in source_indices
                     if not (longitude_mask[index] or latitude_mask[index]
                             or timestamp_mask[index])]
         identity = ObservationProfileIdentity(platform, cycle)
         if not complete:
-            raise ObservationValidationError(
-                f"profile {platform!r}/{cycle!r} has no source row with "
-                "longitude, latitude and time for a marker")
+            skipped.append(SkippedObservationProfile(
+                identity=identity,
+                source_indices=tuple(source_indices),
+                reason=("no source row has complete longitude, latitude "
+                        "and time"),
+            ))
+            continue
         valid_vertical = [index for index in source_indices
                           if not vertical_mask[index]]
         if not valid_vertical:
-            raise ObservationValidationError(
-                f"profile {platform!r}/{cycle!r} has no vertical values")
+            skipped.append(SkippedObservationProfile(
+                identity=identity,
+                source_indices=tuple(source_indices),
+                reason="no non-missing vertical values",
+            ))
+            continue
         representative = complete[0]
         selected_vertical = vertical[valid_vertical]
         markers.append(ObservationMarker(
@@ -453,6 +536,13 @@ def build_observation_markers(
             source_indices=tuple(source_indices),
         ))
 
+    if not markers:
+        reasons = "; ".join(
+            f"{item.identity.platform_id!r}/{item.identity.cycle!r}: "
+            f"{item.reason}" for item in skipped)
+        raise ObservationValidationError(
+            f"no observation marker can be built; skipped profiles: {reasons}")
+
     return ObservationMarkerProduct(
         dataset_identity=descriptor.identity,
         coordinates=metadata,
@@ -467,8 +557,10 @@ def build_observation_markers(
             original_observation_count=int(dataset.sizes[
                 descriptor.sample_dimension]),
             delivered_marker_count=len(markers),
+            skipped_profile_count=len(skipped),
         ),
         markers=tuple(markers),
+        skipped_profiles=tuple(skipped),
     )
 
 
@@ -522,6 +614,9 @@ def build_observation_profile(
         qc_dtype = None
         qc_values = None
         qc_missing = None
+        qc_flag_values = None
+        qc_flag_meanings = None
+        qc_conventions = None
         if qc_name is not None:
             qc = _variable(dataset, qc_name, descriptor.sample_dimension,
                            f"QC variable for {name!r}")
@@ -529,6 +624,9 @@ def build_observation_profile(
             qc_dtype = str(qc.dtype)
             qc_values = all_qc_values[selected]
             qc_missing = all_qc_missing[selected]
+            qc_flag_values = _qc_flag_values(qc)
+            qc_flag_meanings = _optional_qc_text(qc, "flag_meanings")
+            qc_conventions = _optional_qc_text(qc, "conventions")
 
         variables.append(ObservationProfileVariable(
             name=name,
@@ -540,6 +638,9 @@ def build_observation_profile(
             qc_source_dtype=qc_dtype,
             qc_flags=qc_values,
             qc_missing_value_mask=qc_missing,
+            qc_flag_values=qc_flag_values,
+            qc_flag_meanings=qc_flag_meanings,
+            qc_conventions=qc_conventions,
         ))
 
     if not has_valid_measurement:

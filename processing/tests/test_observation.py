@@ -89,7 +89,25 @@ def test_profile_preserves_source_order_values_units_qc_and_timestamps():
     assert temperature.qc_flags[3] == "2"
     assert temperature.qc_missing_value_mask.tolist() == [False, False,
                                                            True, False]
+    assert temperature.qc_flag_values == ("1", "2", "3", "4")
+    assert temperature.qc_flag_meanings == (
+        "good_data probably_good_data probably_bad_data bad_data")
+    assert temperature.qc_conventions == "Argo reference table 2"
     assert salinity.name == "PSAL" and salinity.units == "1e-3"
+    assert salinity.qc_flag_values is None
+    assert salinity.qc_flag_meanings is None
+    assert salinity.qc_conventions is None
+
+
+def test_glider_qc_vocabulary_is_preserved_without_argo_assumptions():
+    product = build_observation_profile(
+        fixtures.glider(), fixtures.glider_descriptor(),
+        fixtures.glider_selection())
+    temperature = product.variables[0]
+
+    assert temperature.qc_flag_values == ("GOOD", "SUSPECT")
+    assert temperature.qc_flag_meanings == "good_data suspect_data"
+    assert temperature.qc_conventions == "IOOS QARTOD"
 
 
 def test_profile_values_and_coordinates_are_exact_source_rows():
@@ -155,11 +173,41 @@ def test_a_profile_with_only_missing_requested_values_is_rejected():
             dataset, fixtures.argo_descriptor(), fixtures.argo_selection("TEMP"))
 
 
-def test_marker_requires_an_existing_complete_position_and_time_row():
+def test_marker_skips_profile_without_complete_position_and_time_row():
     dataset = fixtures.argo()
     dataset["LONGITUDE"].values[:4] = np.nan
 
-    with pytest.raises(ObservationValidationError, match="no source row"):
+    product = build_observation_markers(dataset, fixtures.argo_descriptor())
+
+    assert [marker.identity for marker in product.markers] == [
+        ObservationProfileIdentity("5902", "8")]
+    assert product.grouping.skipped_profile_count == 1
+    skipped = product.skipped_profiles[0]
+    assert skipped.identity == ObservationProfileIdentity("5901", "7")
+    assert skipped.source_indices == (0, 1, 2, 3)
+    assert "complete longitude, latitude and time" in skipped.reason
+
+
+def test_marker_skips_profile_without_vertical_values():
+    dataset = fixtures.argo()
+    dataset["PRES"].values[4:] = np.nan
+
+    product = build_observation_markers(dataset, fixtures.argo_descriptor())
+
+    assert [marker.identity for marker in product.markers] == [
+        ObservationProfileIdentity("5901", "7")]
+    assert product.skipped_profiles[0].identity == \
+        ObservationProfileIdentity("5902", "8")
+    assert product.skipped_profiles[0].reason == \
+        "no non-missing vertical values"
+
+
+def test_marker_fails_only_when_no_profile_can_supply_a_marker():
+    dataset = fixtures.argo()
+    dataset["LONGITUDE"].values[:] = np.nan
+
+    with pytest.raises(ObservationValidationError,
+                       match="no observation marker can be built"):
         build_observation_markers(dataset, fixtures.argo_descriptor())
 
 

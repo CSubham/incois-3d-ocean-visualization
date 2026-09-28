@@ -7,7 +7,10 @@ import json
 import numpy as np
 import pytest
 
-from processing import build_observation_markers, build_observation_profile
+from processing import (
+    ObservationProfileIdentity, ObservationProfileSelection,
+    build_observation_markers, build_observation_profile,
+)
 from processing.tests import observation_fixtures as fixtures
 from serving import wire_observation
 from serving.wire import WireFormatError
@@ -41,6 +44,22 @@ def test_marker_arrays_identities_times_and_source_rows_round_trip():
     )
     assert arrays["marker_source_index_offsets"].tolist() == [0, 4, 7]
     assert arrays["marker_source_index"].tolist() == list(range(7))
+
+
+def test_integral_float_cycle_identity_round_trips_without_decimal_suffix():
+    dataset = fixtures.glider().assign_coords(
+        profile_id=("row", np.ones(4, dtype=np.float64)))
+    selection = ObservationProfileSelection(
+        ObservationProfileIdentity("ru29", "1"), ("temperature",))
+    profile = build_observation_profile(
+        dataset, fixtures.glider_descriptor(), selection)
+    markers = build_observation_markers(dataset, fixtures.glider_descriptor())
+
+    layout, buffer = wire_observation.encode(markers)
+
+    assert profile.profile_identity.cycle == "1"
+    assert markers.markers[0].identity.cycle == "1"
+    assert wire_observation.decode_text(layout, buffer, "cycle") == ("1",)
 
 
 def test_profile_values_masks_qc_timestamps_and_indices_round_trip():
@@ -103,5 +122,27 @@ def test_descriptor_is_json_ready_and_excludes_bulk_arrays():
         "platform_id": "5901", "cycle": "7"}
     assert decoded["product"]["coordinates"]["vertical_kind"] == "pressure"
     assert decoded["product"]["variables"][0]["qc_variable"] == "TEMP_QC"
+    assert decoded["product"]["variables"][0]["qc_flag_values"] == [
+        "1", "2", "3", "4"]
+    assert decoded["product"]["variables"][0]["qc_flag_meanings"] == (
+        "good_data probably_good_data probably_bad_data bad_data")
+    assert decoded["product"]["variables"][0]["qc_conventions"] == \
+        "Argo reference table 2"
+    assert decoded["product"]["variables"][1]["qc_flag_values"] is None
+    assert decoded["product"]["variables"][1]["qc_flag_meanings"] is None
+    assert decoded["product"]["variables"][1]["qc_conventions"] is None
     assert "values" not in decoded["product"]["variables"][0]
     assert decoded["data"]["byte_order"] == "little"
+
+
+def test_glider_qc_vocabulary_is_declared_in_the_wire_descriptor():
+    product = build_observation_profile(
+        fixtures.glider(), fixtures.glider_descriptor(),
+        fixtures.glider_selection())
+
+    variable = wire_observation.describe(product, data_url=None)[
+        "product"]["variables"][0]
+
+    assert variable["qc_flag_values"] == ["GOOD", "SUSPECT"]
+    assert variable["qc_flag_meanings"] == "good_data suspect_data"
+    assert variable["qc_conventions"] == "IOOS QARTOD"

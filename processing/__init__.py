@@ -33,7 +33,8 @@ from processing.observation import (
     ObservationMarker, ObservationMarkerProduct, ObservationProfileIdentity,
     ObservationProfileProduct, ObservationProfileSelection,
     ObservationProfileVariable, ObservationVertical, ObservationVerticalRange,
-    build_observation_markers, build_observation_profile,
+    SkippedObservationProfile, build_observation_markers,
+    build_observation_profile,
 )
 from processing.subsetter import subset_scalar_field
 
@@ -65,5 +66,6 @@ __all__ = [
     "ObservationProfileIdentity", "ObservationProfileProduct",
     "ObservationProfileSelection", "ObservationProfileVariable",
     "ObservationVertical", "ObservationVerticalRange",
+    "SkippedObservationProfile",
     "build_observation_markers", "build_observation_profile",
 ]
