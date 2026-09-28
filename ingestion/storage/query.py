@@ -18,6 +18,8 @@ from ingestion.query import (
     DatasetExtent, DatasetVersionListing, DatasetVersionSummary,
     ManagedModelField, ModelFieldDescriptor, ModelFieldQueryError,
     NotAModelField, NotAnObservationProfile, ObservationProfile,
+    ObservationVersionDescriptor, ObservationVersionListing,
+    observation_vertical_kind,
     ProfileIdentity, ProfileMarker, ProfileNotFound, ProfileSearch,
     ProfileValue, ProfileVariable, ScientificQuery,
     UnavailableDatasetVersion, UndeclaredReference, VariableSummary,
@@ -41,6 +43,12 @@ _LIST_VERSIONS_SQL = f"""
 SELECT {_VERSION_COLUMNS}
 FROM dataset_version
 WHERE geometry = %s
+ORDER BY created_at DESC, import_id DESC
+"""
+_LIST_OBSERVATION_VERSIONS_SQL = f"""
+SELECT {_VERSION_COLUMNS}
+FROM dataset_version
+WHERE geometry = ANY(%s)
 ORDER BY created_at DESC, import_id DESC
 """
 _VERSION_SQL = f"""
@@ -199,6 +207,40 @@ class CatalogueModelFieldQuery(ScientificQuery):
             _close_quietly(source_dataset)
             raise ModelFieldQueryError(
                 "the managed scientific object could not be decoded") from None
+
+    def list_observation_versions(self) -> ObservationVersionListing:
+        try:
+            with self._connection() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(_LIST_OBSERVATION_VERSIONS_SQL,
+                                   (sorted(_OBSERVATION_GEOMETRIES),))
+                    versions = tuple(cursor.fetchall())
+                    variables = self._variables(cursor, [
+                        str(row["import_id"]) for row in versions])
+        except ModelFieldQueryError:
+            raise
+        except Exception:
+            raise ModelFieldQueryError(
+                "the observation catalogue could not be read") from None
+        described: list[ObservationVersionDescriptor] = []
+        unavailable: list[UnavailableDatasetVersion] = []
+        for version in versions:
+            version_id = str(version["import_id"])
+            try:
+                described.append(_observation_descriptor(
+                    version, variables[version_id],
+                    self._source_references.get(str(version["source_id"]))))
+            except (ModelFieldQueryError, ValueError) as exc:
+                unavailable.append(UnavailableDatasetVersion(version_id, str(exc)))
+        return ObservationVersionListing(tuple(described), tuple(unavailable))
+
+    def describe_observation_version(
+            self, dataset_version_id: str) -> ObservationVersionDescriptor:
+        version, variables = self._version(dataset_version_id)
+        _require_observation_profile(version)
+        return _observation_descriptor(
+            version, variables,
+            self._source_references.get(str(version["source_id"])))
 
     def find_profile_markers(
             self, search: ProfileSearch) -> tuple[ProfileMarker, ...]:
@@ -439,31 +481,8 @@ def _descriptor(
     vertical_positive, vertical_basis = _vertical_positive(
         dataset[coordinate_names["vertical"]], declaration, version_id)
 
-    metadata = _required_mapping(version, "metadata", version_id)
-    source_details = _required_mapping(version, "source_details", version_id)
-    provenance = {
-        "import_id": version_id,
-        "source": {
-            "id": str(version["source_id"]),
-            "name": str(version["source_name"]),
-            "dataset": str(version["dataset_id"]),
-            "dataset_name": str(version["dataset_name"]),
-            "kind": str(version["source_kind"]),
-            "details": _portable_mapping(source_details),
-        },
-        "selection": _portable_mapping(
-            _required_mapping(version, "selection", version_id)),
-        "validation": _portable_mapping(
-            _required_mapping(version, "validation", version_id)),
-        "created_at": _iso(version.get("created_at")),
-        "reference_basis": {
-            "crs": crs_basis,
-            "vertical_positive": vertical_basis,
-        },
-        "global_attributes": _portable_mapping(
-            _mapping(metadata.get("global_attributes", {}),
-                     version_id, "global attributes")),
-    }
+    provenance = _version_provenance(version, version_id, {
+        "crs": crs_basis, "vertical_positive": vertical_basis})
     return ModelFieldDescriptor(
         dataset_id=str(version["dataset_id"]),
         dataset_version_id=version_id,
@@ -480,6 +499,95 @@ def _descriptor(
         vertical_positive=vertical_positive,
         provenance=provenance,
     ), grid_mapping
+
+
+def _version_provenance(version: Mapping[str, Any], version_id: str,
+                        reference_basis: Mapping[str, str]) -> dict[str, Any]:
+    """Portable provenance of one stored version, shared by every descriptor."""
+    metadata = _required_mapping(version, "metadata", version_id)
+    source_details = _required_mapping(version, "source_details", version_id)
+    return {
+        "import_id": version_id,
+        "source": {
+            "id": str(version["source_id"]),
+            "name": str(version["source_name"]),
+            "dataset": str(version["dataset_id"]),
+            "dataset_name": str(version["dataset_name"]),
+            "kind": str(version["source_kind"]),
+            "details": _portable_mapping(source_details),
+        },
+        "selection": _portable_mapping(
+            _required_mapping(version, "selection", version_id)),
+        "validation": _portable_mapping(
+            _required_mapping(version, "validation", version_id)),
+        "created_at": _iso(version.get("created_at")),
+        "reference_basis": dict(reference_basis),
+        "global_attributes": _portable_mapping(
+            _mapping(metadata.get("global_attributes", {}),
+                     version_id, "global attributes")),
+    }
+
+
+def _observation_descriptor(version: Mapping[str, Any],
+                            variables: Sequence[Mapping[str, Any]],
+                            declaration: Any) -> ObservationVersionDescriptor:
+    """Describe an observation version from catalogue rows alone."""
+    version_id = str(version["import_id"])
+    metadata = _required_mapping(version, "metadata", version_id)
+    names = _mapping(metadata.get("coordinate_names", {}), version_id,
+                     "coordinate names")
+    units = _mapping(metadata.get("coordinate_units", {}), version_id,
+                     "coordinate units")
+    vertical = names.get("vertical")
+    if not isinstance(vertical, str) or not vertical.strip():
+        raise UndeclaredReference(version_id, "the vertical coordinate name")
+    vertical_units = units.get("vertical")
+    kind = observation_vertical_kind(
+        vertical_units if isinstance(vertical_units, str) else None)
+    if kind is None:
+        raise UndeclaredReference(
+            version_id,
+            f"vertical units that are a depth or a pressure, not "
+            f"{vertical_units!r}")
+    crs = _declaration_value(declaration, "crs")
+    positive = _declaration_value(declaration, "vertical_positive")
+    basis = _declaration_value(declaration, "basis")
+    if not isinstance(crs, str) or not crs.strip():
+        raise UndeclaredReference(version_id, "a coordinate reference system")
+    if positive not in ("down", "up"):
+        raise UndeclaredReference(version_id, "the vertical positive direction")
+    if not isinstance(basis, str) or not basis.strip():
+        raise UndeclaredReference(version_id, "the reference declaration basis")
+    return ObservationVersionDescriptor(
+        dataset_id=str(version["dataset_id"]),
+        dataset_version_id=version_id,
+        source_id=str(version["source_id"]),
+        geometry=str(version["geometry"]),
+        vertical_coordinate=vertical,
+        vertical_units=str(vertical_units),
+        vertical_kind=kind,
+        crs=crs,
+        vertical_positive=positive,
+        variables=tuple(
+            VariableSummary(name=str(item["name"]),
+                            units=(str(item["units"]) if item.get("units")
+                                   is not None else None))
+            for item in variables),
+        extent=DatasetExtent(
+            time_start=_iso(version.get("time_start")),
+            time_end=_iso(version.get("time_end")),
+            depth_min=_optional_float(version.get("depth_min")),
+            depth_max=_optional_float(version.get("depth_max")),
+            west=_optional_float(version.get("west")),
+            east=_optional_float(version.get("east")),
+            south=_optional_float(version.get("south")),
+            north=_optional_float(version.get("north")),
+        ),
+        created_at=_iso(version.get("created_at")) or "",
+        provenance=_version_provenance(version, version_id, {
+            "crs": basis, "vertical_positive": basis,
+            "vertical_kind": f"units {vertical_units!r} of {vertical!r}"}),
+    )
 
 
 def _coordinate_names(version: Mapping[str, Any],

@@ -16,7 +16,8 @@ from ingestion.query import (
     DatasetVersionListing, DatasetVersionSummary, ManagedModelField,
     ModelFieldDescriptor, ModelFieldQueryError, NotAModelField,
     NotAnObservationProfile,
-    ObservationProfile, ProfileIdentity, ProfileMarker, ProfileNotFound,
+    ObservationProfile, ObservationVersionDescriptor,
+    ObservationVersionListing, ProfileIdentity, ProfileMarker, ProfileNotFound,
     ProfileSearch, ProfileValue, ProfileVariable, ScientificQuery,
     UnavailableDatasetVersion, UndeclaredReference, VariableUnavailable,
     VersionNotFound,
@@ -40,6 +41,9 @@ class InMemoryDatasetVersion:
     undeclared_references: Mapping[str, str] = field(default_factory=dict)
     coordinate_names: Mapping[str, str] = field(default_factory=dict)
     unavailable_reason: str | None = None
+    #: What S3 declares about an observation version; None leaves it
+    #: undescribed, exactly as a catalogue row without references would be.
+    observation: ObservationVersionDescriptor | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -108,6 +112,40 @@ class InMemoryModelFieldQuery(ScientificQuery):
             raise VariableUnavailable(dataset_version_id, variable)
         dataset = version.dataset[[variable]].copy(deep=False)
         return ManagedModelField(dataset, descriptor)
+
+    def list_observation_versions(self) -> ObservationVersionListing:
+        described: list[ObservationVersionDescriptor] = []
+        unavailable: list[UnavailableDatasetVersion] = []
+        for item in self._versions.values():
+            if item.summary.geometry not in _OBSERVATION_GEOMETRIES:
+                continue
+            if item.unavailable_reason is not None:
+                unavailable.append(UnavailableDatasetVersion(
+                    item.summary.id, item.unavailable_reason))
+            elif item.observation is None:
+                unavailable.append(UnavailableDatasetVersion(
+                    item.summary.id,
+                    f"dataset version {item.summary.id!r} does not declare "
+                    "its observation semantics"))
+            else:
+                described.append(item.observation)
+        return ObservationVersionListing(
+            versions=tuple(sorted(
+                described, key=lambda d: (d.created_at, d.dataset_version_id),
+                reverse=True)),
+            unavailable=tuple(unavailable),
+        )
+
+    def describe_observation_version(
+            self, dataset_version_id: str) -> ObservationVersionDescriptor:
+        version = self._version(dataset_version_id)
+        if version.summary.geometry not in _OBSERVATION_GEOMETRIES:
+            raise NotAnObservationProfile(
+                dataset_version_id, version.summary.geometry)
+        if version.observation is None:
+            raise UndeclaredReference(dataset_version_id,
+                                      "its observation semantics")
+        return version.observation
 
     def find_profile_markers(
             self, search: ProfileSearch) -> tuple[ProfileMarker, ...]:

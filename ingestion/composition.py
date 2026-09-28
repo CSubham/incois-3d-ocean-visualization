@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from ingestion.config import (
-    CATALOGUE_DSN, MODEL_SOURCE_REFERENCES, OBJECT_STORE_ROOT,
+    CATALOGUE_DSN, OBJECT_STORE_ROOT, SOURCE_REFERENCES,
     S3_QUERY_BACKEND,
 )
 from ingestion.query import ScientificQuery
@@ -35,7 +35,7 @@ def build_model_field_query(
         return CatalogueModelFieldQuery(
             dsn,
             LocalObjectStore(object_root),
-            MODEL_SOURCE_REFERENCES,
+            SOURCE_REFERENCES,
         )
     raise ValueError(
         "S3_QUERY_BACKEND must be 'catalogue' or 'memory', "

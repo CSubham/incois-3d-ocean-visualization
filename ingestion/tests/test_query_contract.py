@@ -9,7 +9,7 @@ import numpy as np
 import psycopg
 import pytest
 
-from ingestion.config import MODEL_SOURCE_REFERENCES
+from ingestion.config import SOURCE_REFERENCES
 from ingestion.query import (
     ManagedFieldClosed, ManagedModelField, ModelFieldQueryError,
     NotAModelField, ProfileIdentity, ProfileNotFound, ProfileSearch,
@@ -39,7 +39,7 @@ def catalogue_case(tmp_path_factory) -> QueryContractCase:
     storage.hand_off(profile)
     return QueryContractCase(
         query=CatalogueModelFieldQuery(
-            dsn, objects, MODEL_SOURCE_REFERENCES),
+            dsn, objects, SOURCE_REFERENCES),
         model_version_id=model.import_id,
         profile_version_id=profile.import_id,
         undeclared_query=CatalogueModelFieldQuery(dsn, objects, {}),
@@ -156,7 +156,7 @@ def test_contract_finds_markers_and_retrieves_an_exact_profile(query_case):
     profile = query_case.query.get_profile(marker.identity)
     assert profile.identity == marker.identity
     assert profile.depth_coordinate == "PRES"
-    assert profile.depth_units == "m"
+    assert profile.depth_units == "decibar"
     assert profile.depth_values == (2.0, 10.0)
     assert profile.time_coordinate == "time"
     assert len(profile.timestamps) == 2
@@ -215,7 +215,7 @@ def test_live_catalogue_listing_uses_persisted_coordinates_without_object_read(
             raise AssertionError(f"unexpected object read: {reference}")
 
     query = CatalogueModelFieldQuery(
-        dsn, ObjectReadsForbidden(), MODEL_SOURCE_REFERENCES)
+        dsn, ObjectReadsForbidden(), SOURCE_REFERENCES)
     listing = query.list_model_versions()
 
     assert [item.id for item in listing] == [
@@ -255,3 +255,62 @@ def test_managed_close_failures_do_not_leak_backend_details():
         managed.close()
     assert "/private/object.nc" not in str(failure.value)
     assert managed.closed
+
+
+def test_contract_describes_observation_versions_from_the_catalogue(query_case):
+    listing = query_case.query.list_observation_versions()
+    described = query_case.query.describe_observation_version(
+        query_case.profile_version_id)
+
+    assert [v.dataset_version_id for v in listing] == [
+        query_case.profile_version_id]
+    assert described == listing[0]
+    assert described.vertical_coordinate == "PRES"
+    assert described.vertical_units == "decibar"
+    assert described.vertical_kind == "pressure"
+    assert described.crs == "EPSG:4326"
+    assert described.vertical_positive == "down"
+    assert {v.name for v in described.variables} == {"PSAL", "TEMP"}
+
+
+def test_contract_refuses_to_describe_a_model_grid_as_observations(query_case):
+    with pytest.raises(ModelFieldQueryError):
+        query_case.query.describe_observation_version(
+            query_case.model_version_id)
+
+
+def test_catalogue_reports_observations_without_declared_references(
+        catalogue_case):
+    undeclared = catalogue_case.undeclared_query
+    listing = undeclared.list_observation_versions()
+
+    assert catalogue_case.profile_version_id in [
+        item.id for item in listing.unavailable]
+    with pytest.raises(UndeclaredReference):
+        undeclared.describe_observation_version(
+            catalogue_case.profile_version_id)
+
+
+def test_memory_reports_observations_without_declared_semantics():
+    from dataclasses import replace
+
+    from ingestion.query_memory import InMemoryModelFieldQuery
+
+    case = in_memory_case()
+    bare = [replace(v, observation=None) for v in case.query._versions.values()]
+    query = InMemoryModelFieldQuery(bare)
+
+    assert case.profile_version_id in [
+        item.id for item in query.list_observation_versions().unavailable]
+    with pytest.raises(UndeclaredReference):
+        query.describe_observation_version(case.profile_version_id)
+
+
+def test_vertical_kind_comes_from_units_and_refuses_the_unknown():
+    from ingestion.query import observation_vertical_kind
+
+    assert observation_vertical_kind("decibar") == "pressure"
+    assert observation_vertical_kind(" dbar ") == "pressure"
+    assert observation_vertical_kind("m") == "depth"
+    assert observation_vertical_kind("fathoms") is None
+    assert observation_vertical_kind(None) is None

@@ -180,3 +180,32 @@ MODEL_SOURCE_REFERENCES: dict[str, ModelSourceReference] = {
         ),
     ),
 }
+
+
+# Observation sources publish no CF grid mapping for their positions, so each
+# is declared here with its basis rather than guessed downstream. Pressure
+# and depth both increase downward; pressure is never converted to depth.
+OBSERVATION_SOURCE_REFERENCES: dict[str, ModelSourceReference] = {
+    INCOIS_ERDDAP.source_id: ModelSourceReference(
+        crs="EPSG:4326",
+        vertical_positive="down",
+        basis=(
+            "INCOIS ERDDAP Argo records give longitude and latitude in "
+            "degrees_east/degrees_north from satellite position fixes on "
+            "WGS84; sea pressure increases downward"
+        ),
+    ),
+    IOOS_GLIDERS.source_id: ModelSourceReference(
+        crs="EPSG:4326",
+        vertical_positive="down",
+        basis=(
+            "IOOS Glider DAC profiles give longitude and latitude in "
+            "degrees_east/degrees_north from GPS fixes on WGS84 and declare "
+            "depth positive down"
+        ),
+    ),
+}
+
+#: Every source's declared references, as the S3 read adapter receives them.
+SOURCE_REFERENCES: dict[str, ModelSourceReference] = {
+    **MODEL_SOURCE_REFERENCES, **OBSERVATION_SOURCE_REFERENCES}

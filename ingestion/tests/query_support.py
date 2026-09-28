@@ -22,6 +22,7 @@ from ingestion.domain.selection import (
 )
 from ingestion.domain.validation import ValidationResult
 from ingestion.query import (
+    ObservationVersionDescriptor,
     DatasetExtent, DatasetVersionSummary, ModelFieldDescriptor,
     ScientificQuery, VariableSummary,
 )
@@ -114,7 +115,7 @@ def profile_dataset() -> xr.Dataset:
                 np.array(["2026-09-28", "2026-09-28"],
                          dtype="datetime64[ns]"),
             ),
-            "PRES": ("observation", [2.0, 10.0], {"units": "m"}),
+            "PRES": ("observation", [2.0, 10.0], {"units": "decibar"}),
             "latitude": ("observation", [8.5, 8.5]),
             "longitude": ("observation", [73.5, 73.5]),
             "PLATFORM_NUMBER": ("observation", [7902250, 7902250]),
@@ -283,6 +284,23 @@ def in_memory_case() -> QueryContractCase:
             "time": "time", "vertical": "PRES",
             "latitude": "latitude", "longitude": "longitude",
         },
+        observation=ObservationVersionDescriptor(
+            dataset_id="Indian_ARGO_Floats",
+            dataset_version_id=PROFILE_VERSION_ID,
+            source_id="incois_erddap",
+            geometry="profile",
+            vertical_coordinate="PRES",
+            vertical_units="decibar",
+            vertical_kind="pressure",
+            crs="EPSG:4326",
+            vertical_positive="down",
+            variables=(VariableSummary("PSAL", "1e-3"),
+                       VariableSummary("TEMP", "degree_Celsius")),
+            extent=extent,
+            created_at="2026-09-28T00:00:00+00:00",
+            provenance={"import_id": PROFILE_VERSION_ID,
+                        "source": {"id": "incois_erddap"}},
+        ),
     )
     undeclared = InMemoryDatasetVersion(
         summary=DatasetVersionSummary(

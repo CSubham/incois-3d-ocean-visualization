@@ -444,8 +444,101 @@ class ModelFieldQuery(ABC):
         """Open one complete decoded scalar variable without processing it."""
 
 
+ObservationVerticalKind = Literal["depth", "pressure"]
+
+_PRESSURE_UNITS = frozenset({"dbar", "dbars", "decibar", "decibars", "db"})
+_LENGTH_UNITS = frozenset({"m", "meter", "meters", "metre", "metres"})
+
+
+def observation_vertical_kind(units: str | None) -> ObservationVerticalKind | None:
+    """Whether a stored vertical coordinate is a depth or a sea pressure.
+
+    Decided from its declared units alone; None when the units are neither,
+    so a caller refuses rather than guesses. Pressure is never converted to
+    depth here.
+    """
+    normalized = (units or "").strip().lower()
+    if normalized in _PRESSURE_UNITS:
+        return "pressure"
+    if normalized in _LENGTH_UNITS:
+        return "depth"
+    return None
+
+
+@dataclass(frozen=True)
+class ObservationVersionDescriptor:
+    """What one stored observation version is, without reading its records.
+
+    ``crs`` and ``vertical_positive`` come from the source's CF metadata or an
+    explicit per-source declaration with its basis (in provenance under
+    ``reference_basis``); ``vertical_kind`` comes from the stored vertical
+    coordinate's units.
+    """
+
+    dataset_id: str
+    dataset_version_id: str
+    source_id: str
+    geometry: str
+    vertical_coordinate: str
+    vertical_units: str
+    vertical_kind: ObservationVerticalKind
+    crs: str
+    vertical_positive: VerticalPositive
+    variables: tuple[VariableSummary, ...]
+    extent: DatasetExtent
+    created_at: str
+    provenance: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        for name in ("dataset_id", "dataset_version_id", "source_id",
+                     "geometry", "vertical_coordinate", "vertical_units",
+                     "crs", "created_at"):
+            _required_text(getattr(self, name), name)
+        if self.vertical_kind not in ("depth", "pressure"):
+            raise ValueError("vertical_kind must be 'depth' or 'pressure'")
+        if self.vertical_positive not in ("down", "up"):
+            raise ValueError("vertical_positive must be 'down' or 'up'")
+        if not isinstance(self.provenance, Mapping):
+            raise ValueError("provenance must be a mapping")
+        object.__setattr__(self, "provenance", _json_mapping(self.provenance))
+
+
+@dataclass(frozen=True)
+class ObservationVersionListing(Sequence[ObservationVersionDescriptor]):
+    """Readable observation versions, plus those that could not be described."""
+
+    versions: tuple[ObservationVersionDescriptor, ...]
+    unavailable: tuple[UnavailableDatasetVersion, ...] = ()
+
+    @overload
+    def __getitem__(self, index: int) -> ObservationVersionDescriptor: ...
+
+    @overload
+    def __getitem__(self, index: slice
+                    ) -> tuple[ObservationVersionDescriptor, ...]: ...
+
+    def __getitem__(self, index: int | slice
+                    ) -> ObservationVersionDescriptor | tuple[ObservationVersionDescriptor, ...]:
+        return self.versions[index]
+
+    def __iter__(self) -> Iterator[ObservationVersionDescriptor]:
+        return iter(self.versions)
+
+    def __len__(self) -> int:
+        return len(self.versions)
+
+
 class ObservationQuery(ABC):
     """Read-only S3 boundary for observation markers and exact profiles."""
+
+    @abstractmethod
+    def list_observation_versions(self) -> ObservationVersionListing:
+        """List observation versions without reading their records."""
+
+    @abstractmethod
+    def describe_observation_version(
+            self, dataset_version_id: str) -> ObservationVersionDescriptor:
+        """Describe one observation version by its stable catalogue id."""
 
     @abstractmethod
     def find_profile_markers(
@@ -466,6 +559,8 @@ __all__ = [
     "ManagedFieldClosed", "ManagedModelField", "ModelFieldDescriptor",
     "ModelFieldQuery", "ModelFieldQueryError", "NotAModelField",
     "NotAnObservationProfile", "ObservationProfile", "ObservationQuery",
+    "ObservationVersionDescriptor", "ObservationVersionListing",
+    "ObservationVerticalKind", "observation_vertical_kind",
     "ProfileIdentity", "ProfileMarker", "ProfileNotFound", "ProfileSearch",
     "ProfileValue", "ProfileVariable", "ScientificQuery",
     "UnavailableDatasetVersion", "UndeclaredReference", "VariableSummary",
