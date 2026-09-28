@@ -7,7 +7,8 @@ from typing import Mapping
 
 from ingestion.query import (
     ModelFieldDescriptor, ModelFieldQuery, ModelFieldQueryError,
-    ObservationQuery, ProfileIdentity, ProfileSearch, VariableUnavailable,
+    ObservationQuery, ObservationVersionDescriptor, ProfileIdentity,
+    ProfileSearch, VariableUnavailable,
 )
 from processing.domain import (
     CoordinateRoles, DatasetIdentity, SamplingRequest, ScalarGridDescriptor,
@@ -18,6 +19,7 @@ from processing.depth_slice import (
 )
 from processing.errors import (
     InvalidRequestError, ManagedDataUnavailableError, VariableSelectionError,
+    WorkLimitError,
 )
 from processing.execution import ProductBuilder, ProductRequest
 from processing.observation import (
@@ -161,14 +163,43 @@ class ManagedObservationProfileRequest:
                 "requested observation variable names must be unique")
 
 
+def observation_record_descriptor(
+        descriptor: ObservationVersionDescriptor) -> ObservationRecordDescriptor:
+    """Map what S3 declares about an observation version onto S4's contract."""
+    return ObservationRecordDescriptor(
+        identity=DatasetIdentity(
+            dataset_id=descriptor.dataset_id,
+            dataset_version_id=descriptor.dataset_version_id,
+        ),
+        spatial_reference=SpatialReference(
+            crs=descriptor.crs,
+            vertical_positive=descriptor.vertical_positive,
+        ),
+        vertical_kind=descriptor.vertical_kind,
+        provenance=descriptor.provenance,
+    )
+
+
 def _record_descriptor(
-        descriptors: Mapping[str, ObservationRecordDescriptor],
+        query: ObservationQuery,
+        descriptors: Mapping[str, ObservationRecordDescriptor] | None,
         dataset_version_id: str) -> ObservationRecordDescriptor:
-    descriptor = descriptors.get(dataset_version_id)
-    if descriptor is None:
-        raise ManagedDataUnavailableError(
-            f"dataset version {dataset_version_id!r} has no configured "
-            "observation semantics")
+    """The version's semantics: an explicit override, else S3's declaration.
+
+    Resolved per request, so versions imported after start-up are served.
+    """
+    if descriptors is not None:
+        descriptor = descriptors.get(dataset_version_id)
+        if descriptor is None:
+            raise ManagedDataUnavailableError(
+                f"dataset version {dataset_version_id!r} has no configured "
+                "observation semantics")
+    else:
+        try:
+            descriptor = observation_record_descriptor(
+                query.describe_observation_version(dataset_version_id))
+        except ModelFieldQueryError as exc:
+            raise ManagedDataUnavailableError(str(exc)) from exc
     if descriptor.identity.dataset_version_id != dataset_version_id:
         raise InvalidRequestError(
             f"observation descriptor version "
@@ -179,15 +210,28 @@ def _record_descriptor(
 
 def prepare_managed_observation_markers(
         query: ObservationQuery,
-        descriptors: Mapping[str, ObservationRecordDescriptor],
-        request: ManagedObservationMarkerRequest) -> ObservationMarkerProduct:
-    """Query S3 marker/profile records and build one S4 marker product."""
+        descriptors: Mapping[str, ObservationRecordDescriptor] | None,
+        request: ManagedObservationMarkerRequest,
+        maximum_markers: int | None = None) -> ObservationMarkerProduct:
+    """Query S3 marker/profile records and build one S4 marker product.
+
+    ``maximum_markers`` is checked before any profile record is read, so an
+    over-wide search costs one index query rather than one read per profile.
+    """
     descriptor = _record_descriptor(
-        descriptors, request.dataset_version_id)
+        query, descriptors, request.dataset_version_id)
     try:
         marker_records = tuple(
             marker for marker in query.find_profile_markers(request.search)
             if marker.identity.dataset_version_id == request.dataset_version_id)
+    except ModelFieldQueryError as exc:
+        raise ManagedDataUnavailableError(str(exc)) from exc
+    if maximum_markers is not None and len(marker_records) > maximum_markers:
+        raise WorkLimitError(
+            f"the search finds {len(marker_records)} profiles; this server "
+            f"builds at most {maximum_markers} markers. Narrow the area or "
+            "time window")
+    try:
         records = tuple((marker, query.get_profile(marker.identity))
                         for marker in marker_records)
     except ModelFieldQueryError as exc:
@@ -197,11 +241,11 @@ def prepare_managed_observation_markers(
 
 def prepare_managed_observation_profile(
         query: ObservationQuery,
-        descriptors: Mapping[str, ObservationRecordDescriptor],
+        descriptors: Mapping[str, ObservationRecordDescriptor] | None,
         request: ManagedObservationProfileRequest) -> ObservationProfileProduct:
     """Query one exact S3 profile record and build its S4 product."""
     descriptor = _record_descriptor(
-        descriptors, request.identity.dataset_version_id)
+        query, descriptors, request.identity.dataset_version_id)
     try:
         profile = query.get_profile(request.identity)
     except ModelFieldQueryError as exc:
@@ -221,27 +265,35 @@ def prepare_managed_observation_profile(
 
 def managed_observation_marker_builder(
         query: ObservationQuery,
-        descriptors: Mapping[str, ObservationRecordDescriptor],
+        descriptors: Mapping[str, ObservationRecordDescriptor] | None = None,
+        maximum_markers: int | None = None,
         ) -> ProductBuilder[
             ManagedObservationMarkerRequest, ObservationMarkerProduct]:
-    """Bind marker-product execution to one configured S3 query."""
-    configured = dict(descriptors)
+    """Bind marker-product execution to one configured S3 query.
+
+    Without ``descriptors`` each version's semantics come from S3 per
+    request; a mapping is an explicit override for fixtures.
+    """
+    configured = dict(descriptors) if descriptors is not None else None
 
     def build(request: ManagedObservationMarkerRequest
               ) -> ObservationMarkerProduct:
         return prepare_managed_observation_markers(
-            query, configured, request)
+            query, configured, request, maximum_markers)
 
     return build
 
 
 def managed_observation_profile_builder(
         query: ObservationQuery,
-        descriptors: Mapping[str, ObservationRecordDescriptor],
+        descriptors: Mapping[str, ObservationRecordDescriptor] | None = None,
         ) -> ProductBuilder[
             ManagedObservationProfileRequest, ObservationProfileProduct]:
-    """Bind exact-profile execution to one configured S3 query."""
-    configured = dict(descriptors)
+    """Bind exact-profile execution to one configured S3 query.
+
+    Without ``descriptors`` each version's semantics come from S3 per request.
+    """
+    configured = dict(descriptors) if descriptors is not None else None
 
     def build(request: ManagedObservationProfileRequest
               ) -> ObservationProfileProduct:
@@ -252,6 +304,7 @@ def managed_observation_profile_builder(
 
 
 __all__ = [
+    "observation_record_descriptor",
     "ManagedObservationMarkerRequest", "ManagedObservationProfileRequest",
     "ManagedDepthSliceRequest", "managed_depth_slice_builder",
     "managed_observation_marker_builder",

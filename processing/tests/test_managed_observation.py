@@ -8,6 +8,7 @@ from ingestion.query import ProfileIdentity, ProfileSearch
 from ingestion.tests.query_support import PROFILE_VERSION_ID, in_memory_case
 from processing import (
     DatasetIdentity, InvalidRequestError, ManagedDataUnavailableError,
+    WorkLimitError,
     ObservationRecordDescriptor, SpatialReference,
 )
 from processing.managed import (
@@ -78,7 +79,7 @@ def test_managed_profile_builder_preserves_exact_record_values_and_qc():
     assert product.vertical_values.tolist() == [2.0, 10.0]
     assert product.coordinates.names.vertical == "PRES"
     assert product.coordinates.names.time == "time"
-    assert product.coordinates.units["vertical"] == "m"
+    assert product.coordinates.units["vertical"] == "decibar"
     temperature, salinity = product.variables
     assert temperature.values.tolist() == [28.0, 27.5]
     assert temperature.source_dtype is None
@@ -119,3 +120,42 @@ def test_managed_observation_descriptor_must_match_requested_version():
     with pytest.raises(InvalidRequestError, match="contradicts requested"):
         builder(ManagedObservationMarkerRequest(
             dataset_version_id=PROFILE_VERSION_ID, search=_search()))
+
+
+def test_observation_semantics_are_resolved_from_s3_per_request():
+    case = in_memory_case()
+    build = managed_observation_profile_builder(case.query)
+
+    product = build(ManagedObservationProfileRequest(
+        identity=ProfileIdentity(PROFILE_VERSION_ID, "7902250", "12"),
+        variables=("TEMP",)))
+
+    assert product.coordinates.vertical_kind == "pressure"
+    assert product.spatial_reference.crs == "EPSG:4326"
+
+
+def test_an_undescribed_observation_version_is_a_data_failure():
+    from dataclasses import replace
+
+    from ingestion.query_memory import InMemoryModelFieldQuery
+
+    case = in_memory_case()
+    bare = InMemoryModelFieldQuery(
+        [replace(v, observation=None) for v in case.query._versions.values()])
+    build = managed_observation_marker_builder(bare)
+
+    with pytest.raises(ManagedDataUnavailableError, match="observation semantics"):
+        build(ManagedObservationMarkerRequest(PROFILE_VERSION_ID, _search()))
+
+
+def test_the_marker_ceiling_is_checked_before_any_profile_is_read(monkeypatch):
+    case = in_memory_case()
+
+    def forbidden(identity):
+        raise AssertionError("a profile was read past the marker ceiling")
+
+    monkeypatch.setattr(case.query, "get_profile", forbidden)
+    build = managed_observation_marker_builder(case.query, maximum_markers=0)
+
+    with pytest.raises(WorkLimitError, match="at most 0 markers"):
+        build(ManagedObservationMarkerRequest(PROFILE_VERSION_ID, _search()))
