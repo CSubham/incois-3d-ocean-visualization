@@ -93,3 +93,30 @@ def test_the_descriptor_is_plain_json_with_every_fact_and_no_bulk_arrays():
     assert meta["sampling"]["original_point_count"] == 12
     assert "selected_subset_flat_indices" not in meta["sampling"]
     assert "points" not in meta
+
+
+GOLDEN = __import__("pathlib").Path(__file__).resolve().parents[2] / "web" / "test-fixtures"
+
+
+def _golden_product():
+    dataset = fixtures.grid()
+    values = dataset["water_temp"].values.copy()
+    values[1, 1, 1, 1] = np.nan          # the first delivered point is missing
+    dataset["water_temp"].values = values
+    return _product(dataset, maximum_points=5)
+
+
+def test_the_browser_golden_fixture_matches_the_encoder():
+    """The browser decoder is tested against these files; regenerate them
+    with WIRE_GOLDEN_UPDATE=1 only when the wire format changes on purpose."""
+    product = _golden_product()
+    descriptor = json.dumps(wire.describe(product, data_url="/data"),
+                            indent=2, sort_keys=True) + "\n"
+    _, buffer = wire.encode(product)
+    if __import__("os").environ.get("WIRE_GOLDEN_UPDATE") == "1":
+        GOLDEN.mkdir(parents=True, exist_ok=True)
+        (GOLDEN / "point-field.json").write_text(descriptor)
+        (GOLDEN / "point-field.bin").write_bytes(buffer)
+
+    assert (GOLDEN / "point-field.json").read_text() == descriptor
+    assert (GOLDEN / "point-field.bin").read_bytes() == buffer

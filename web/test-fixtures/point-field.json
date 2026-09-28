@@ -1,0 +1,179 @@
+{
+  "data": {
+    "arrays": [
+      {
+        "byte_length": 40,
+        "byte_offset": 0,
+        "count": 5,
+        "dtype": "<f8",
+        "name": "longitude"
+      },
+      {
+        "byte_length": 40,
+        "byte_offset": 40,
+        "count": 5,
+        "dtype": "<f8",
+        "name": "latitude"
+      },
+      {
+        "byte_length": 40,
+        "byte_offset": 80,
+        "count": 5,
+        "dtype": "<f8",
+        "name": "depth"
+      },
+      {
+        "byte_length": 20,
+        "byte_offset": 120,
+        "count": 5,
+        "dtype": "<f4",
+        "name": "values"
+      },
+      {
+        "byte_length": 5,
+        "byte_offset": 144,
+        "count": 5,
+        "dtype": "|u1",
+        "name": "missing_value_mask"
+      },
+      {
+        "byte_length": 80,
+        "byte_offset": 152,
+        "components": [
+          "time",
+          "depth",
+          "latitude",
+          "longitude"
+        ],
+        "count": 20,
+        "dtype": "<u4",
+        "name": "source_index"
+      },
+      {
+        "byte_length": 20,
+        "byte_offset": 232,
+        "count": 5,
+        "dtype": "<u4",
+        "name": "selected_subset_flat_index"
+      }
+    ],
+    "byte_length": 252,
+    "byte_order": "little",
+    "media_type": "application/octet-stream",
+    "url": "/data"
+  },
+  "point_count": 5,
+  "product": {
+    "coordinate_transform": {
+      "horizontal": "source longitude and latitude values in the declared CRS; not reprojected and not re-wrapped",
+      "kind": "identity",
+      "vertical": "source depth values in source units and the declared positive direction; no exaggeration applied"
+    },
+    "coordinates": {
+      "dimensions": {
+        "depth": "depth",
+        "latitude": "lat",
+        "longitude": "lon",
+        "time": "time"
+      },
+      "dtypes": {
+        "depth": "float64",
+        "latitude": "float64",
+        "longitude": "float64",
+        "time": "datetime64[ns]"
+      },
+      "names": {
+        "depth": "depth",
+        "latitude": "lat",
+        "longitude": "lon",
+        "time": "time"
+      },
+      "time_encoding": {
+        "calendar": null,
+        "units": null
+      },
+      "units": {
+        "depth": "m",
+        "latitude": "degrees_north",
+        "longitude": "degrees_east",
+        "time": null
+      }
+    },
+    "delivered_sample_range": {
+      "maximum": 71.0,
+      "minimum": 55.0,
+      "missing_point_count": 1,
+      "valid_point_count": 4
+    },
+    "dimensions": {
+      "semantic_order": [
+        "depth",
+        "lat",
+        "lon"
+      ],
+      "source_order": [
+        "time",
+        "depth",
+        "lat",
+        "lon"
+      ],
+      "subset_shape": [
+        2,
+        2,
+        3
+      ]
+    },
+    "full_subset_range": {
+      "maximum": 71.0,
+      "minimum": 54.0,
+      "missing_point_count": 1,
+      "valid_point_count": 11
+    },
+    "identity": {
+      "dataset_id": "hycom-glby008",
+      "dataset_version_id": "import-123",
+      "time_coordinate": "time",
+      "time_value": "2026-01-02",
+      "variable": "water_temp"
+    },
+    "mask_semantics": {
+      "masked_values": "not scientific values; consumers must apply the mask and exclude them from display and ranges",
+      "sources": [
+        "NaN after CF decoding",
+        "masked array element"
+      ],
+      "true_means": "the source cell has no valid value"
+    },
+    "product_type": "sampled_scalar_point_field",
+    "provenance": {
+      "import_id": "import-123",
+      "source": "fixture://decoded-grid"
+    },
+    "sampling": {
+      "delivered_point_count": 5,
+      "delivered_valid_point_count": 4,
+      "is_lossy": true,
+      "maximum_points": 5,
+      "omitted_point_count": 7,
+      "original_point_count": 12,
+      "original_valid_point_count": 11,
+      "parameters": {
+        "basis": "index space: positions in the subset array, not physical distance, so uneven depth levels are sampled by level rather than by metre",
+        "masked_cells_delivered": "with missing_value_mask true",
+        "masked_cells_eligible": true,
+        "multiple_points": "integer-even spacing including endpoints",
+        "single_point": "lower central flat index",
+        "traversal": "C-order over (depth, latitude, longitude)"
+      },
+      "policy": "evenly-spaced-flat-index-v1"
+    },
+    "schema_version": "s4.sampled-scalar-point-field/1.0",
+    "source_dtype": "float32",
+    "spatial_reference": {
+      "crs": "EPSG:4326",
+      "vertical_positive": "down"
+    },
+    "variable_units": "degree_Celsius"
+  },
+  "wire_format": "s5.point-field-wire/1.0"
+}
