@@ -233,7 +233,18 @@ def test_the_catalogue_lists_versions_as_plain_json():
     client = _app(_Catalogue((_Version("import-1", ("water_temp",)),)))
 
     assert client.get("/api/v1/catalogue").json() == {
-        "versions": [{"id": "import-1", "variables": ["water_temp"]}]}
+        "versions": [{"id": "import-1", "variables": ["water_temp"]}],
+        "unavailable": []}
+
+
+def test_the_catalogue_reports_versions_it_could_not_read():
+    from ingestion.query import DatasetVersionListing, UnavailableDatasetVersion
+
+    listing = DatasetVersionListing(
+        versions=(), unavailable=(UnavailableDatasetVersion("import-9", "the stored object could not be opened"),))
+    body = _app(_Catalogue(listing)).get("/api/v1/catalogue").json()
+
+    assert body["unavailable"] == [{"id": "import-9", "reason": "the stored object could not be opened"}]
 
 
 @pytest.mark.parametrize("catalogue", [None, _Catalogue(fail=True)])
@@ -258,6 +269,6 @@ def test_the_default_app_binds_the_configured_s3_reads(monkeypatch):
     monkeypatch.setenv("SERVING_WEB_ROOT", "")
     client = TestClient(compose.create_default_app())
 
-    assert client.get("/api/v1/catalogue").json() == {"versions": []}
+    assert client.get("/api/v1/catalogue").json()["versions"] == []
     view = client.post("/api/v1/point-fields", json=BODY).json()
     assert view["failure"]["code"] == "data_unavailable"

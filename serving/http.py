@@ -110,7 +110,10 @@ def create_app(coordinator: RequestCoordinator,
             raise HTTPException(status_code=503, detail={
                 "code": "catalogue_unavailable",
                 "message": "the model catalogue could not be read"}) from exc
-        return {"versions": [wire.plain(version) for version in versions]}
+        # Versions S3 could not read are reported, not silently omitted.
+        unavailable = getattr(versions, "unavailable", ())
+        return {"versions": [wire.plain(version) for version in versions],
+                "unavailable": [wire.plain(item) for item in unavailable]}
 
     @app.post(f"{API}/point-fields", status_code=202)
     def request_point_field(body: PointFieldBody) -> JSONResponse:
