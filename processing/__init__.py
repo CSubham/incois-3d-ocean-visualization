@@ -11,10 +11,12 @@ from processing.domain import (
     SpatialReference,
 )
 from processing.errors import (
-    AllMissingSubsetError, EmptySubsetError, GridValidationError,
-    InvalidRequestError, ManagedDataUnavailableError, PointBudgetError,
-    ProcessingError, TimeSelectionError, UnknownRequestError,
-    VariableSelectionError, WorkLimitError,
+    AllMissingObservationError, AllMissingSubsetError, EmptySubsetError,
+    GridValidationError, InvalidRequestError, ManagedDataUnavailableError,
+    ObservationIdentityError, ObservationValidationError,
+    ObservationVariableError, PointBudgetError, ProcessingError,
+    TimeSelectionError, UnknownRequestError, VariableSelectionError,
+    WorkLimitError,
 )
 from processing.execution import (
     ExecutorCapabilities, Failure, JobState, LocalExecutor, ProductBuilder,
@@ -23,17 +25,30 @@ from processing.execution import (
 from processing.point_field import (
     build_sampled_scalar_point_field, prepare_sampled_scalar_point_field,
 )
+from processing.observation import (
+    MARKER_PRODUCT_TYPE, MARKER_SCHEMA_VERSION, OBSERVATION_IDENTITY_TRANSFORM,
+    OBSERVATION_MISSING_MASK, PROFILE_PRODUCT_TYPE, PROFILE_SCHEMA_VERSION,
+    MarkerGroupingMetadata, ObservationCoordinateMetadata,
+    ObservationCoordinateRoles, ObservationDatasetDescriptor,
+    ObservationMarker, ObservationMarkerProduct, ObservationProfileIdentity,
+    ObservationProfileProduct, ObservationProfileSelection,
+    ObservationProfileVariable, ObservationVertical, ObservationVerticalRange,
+    build_observation_markers, build_observation_profile,
+)
 from processing.subsetter import subset_scalar_field
 
 __all__ = [
     "IDENTITY_TRANSFORM", "MISSING_VALUE_MASK", "PRODUCT_SCHEMA_VERSION",
     "PRODUCT_TYPE", "SAMPLING_POLICY", "VERTICAL_POSITIVE",
-    "AllMissingSubsetError", "CoordinateMetadata", "CoordinateRoles",
+    "AllMissingObservationError", "AllMissingSubsetError",
+    "CoordinateMetadata", "CoordinateRoles",
     "CoordinateTransform", "DatasetIdentity", "DepthBounds",
     "DimensionMetadata", "EmptySubsetError", "GeographicBounds",
     "GridValidationError", "InvalidRequestError", "MaskSemantics",
     "PhysicalRange", "PointBudgetError", "PointFieldData",
-    "ProcessingError", "ProductIdentity", "SamplingMetadata",
+    "ObservationIdentityError", "ObservationValidationError",
+    "ObservationVariableError", "ProcessingError", "ProductIdentity",
+    "SamplingMetadata",
     "SamplingRequest", "ScalarGridDescriptor", "ScalarPointFieldProduct",
     "ScalarSelection", "ScalarSubset", "SourceCellIndex",
     "SpatialReference", "TimeSelectionError", "VariableSelectionError",
@@ -41,5 +56,14 @@ __all__ = [
     "ManagedDataUnavailableError", "ProductBuilder", "ProductExecutor",
     "ProductJob", "ProductRequest", "UnknownRequestError", "WorkLimitError", "failure_for",
     "build_sampled_scalar_point_field", "prepare_sampled_scalar_point_field",
-    "subset_scalar_field",
+    "subset_scalar_field", "MARKER_PRODUCT_TYPE", "MARKER_SCHEMA_VERSION",
+    "OBSERVATION_IDENTITY_TRANSFORM", "OBSERVATION_MISSING_MASK",
+    "PROFILE_PRODUCT_TYPE", "PROFILE_SCHEMA_VERSION",
+    "MarkerGroupingMetadata", "ObservationCoordinateMetadata",
+    "ObservationCoordinateRoles", "ObservationDatasetDescriptor",
+    "ObservationMarker", "ObservationMarkerProduct",
+    "ObservationProfileIdentity", "ObservationProfileProduct",
+    "ObservationProfileSelection", "ObservationProfileVariable",
+    "ObservationVertical", "ObservationVerticalRange",
+    "build_observation_markers", "build_observation_profile",
 ]

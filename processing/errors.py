@@ -49,3 +49,19 @@ class ManagedDataUnavailableError(ProcessingError):
 
 class UnknownRequestError(ProcessingError):
     """No request with this identity is known to the executor."""
+
+
+class ObservationValidationError(ProcessingError):
+    """Decoded observations do not match their explicit semantic descriptor."""
+
+
+class ObservationIdentityError(ProcessingError):
+    """A platform and cycle/profile identity is missing or unavailable."""
+
+
+class ObservationVariableError(ProcessingError):
+    """A requested observation variable is missing or cannot be profiled."""
+
+
+class AllMissingObservationError(ProcessingError):
+    """The selected profile has no usable requested measurement values."""
