@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS dataset_version (
     -- covering a region and period without opening any arrays.
     time_start       timestamptz,
     time_end         timestamptz,
+    vertical_min     double precision,
+    vertical_max     double precision,
+    vertical_kind    text CHECK (vertical_kind IN ('depth', 'pressure')),
+    vertical_units   text,
+    -- Backward-compatible depth-only view. Pressure is never stored here.
     depth_min        double precision,
     depth_max        double precision,
     footprint        geography(Polygon, 4326),
@@ -40,6 +45,49 @@ ALTER TABLE dataset_version
     ADD COLUMN IF NOT EXISTS time_values jsonb;
 ALTER TABLE dataset_version
     ADD COLUMN IF NOT EXISTS depth_values jsonb;
+ALTER TABLE dataset_version
+    ADD COLUMN IF NOT EXISTS vertical_min double precision;
+ALTER TABLE dataset_version
+    ADD COLUMN IF NOT EXISTS vertical_max double precision;
+ALTER TABLE dataset_version
+    ADD COLUMN IF NOT EXISTS vertical_kind text;
+ALTER TABLE dataset_version
+    ADD COLUMN IF NOT EXISTS vertical_units text;
+
+-- Migrate immutable rows written before semantic vertical extents existed.
+-- Their old depth columns held the generic vertical coordinate. Units were
+-- already preserved in canonical metadata, so no conversion or guess is
+-- needed. Unknown units remain explicit null semantics.
+UPDATE dataset_version
+SET vertical_units = NULLIF(BTRIM(metadata #>>
+        '{coordinate_units,vertical}'), '')
+WHERE vertical_units IS NULL;
+
+UPDATE dataset_version
+SET vertical_kind = CASE LOWER(BTRIM(vertical_units))
+        WHEN 'dbar' THEN 'pressure'
+        WHEN 'dbars' THEN 'pressure'
+        WHEN 'decibar' THEN 'pressure'
+        WHEN 'decibars' THEN 'pressure'
+        WHEN 'db' THEN 'pressure'
+        WHEN 'm' THEN 'depth'
+        WHEN 'meter' THEN 'depth'
+        WHEN 'meters' THEN 'depth'
+        WHEN 'metre' THEN 'depth'
+        WHEN 'metres' THEN 'depth'
+        ELSE NULL
+    END
+WHERE vertical_kind IS NULL;
+
+UPDATE dataset_version
+SET vertical_min = COALESCE(vertical_min, depth_min),
+    vertical_max = COALESCE(vertical_max, depth_max)
+WHERE vertical_min IS NULL OR vertical_max IS NULL;
+
+UPDATE dataset_version
+SET depth_min = NULL, depth_max = NULL
+WHERE vertical_kind = 'pressure'
+  AND (depth_min IS NOT NULL OR depth_max IS NOT NULL);
 
 CREATE INDEX IF NOT EXISTS dataset_version_dataset
     ON dataset_version (source_id, dataset_id);
@@ -79,10 +127,45 @@ CREATE TABLE IF NOT EXISTS observation_profile (
     cycle            text,
     observed_at      timestamptz,
     position         geography(Point, 4326) NOT NULL,
+    -- Source row selected under the first-complete-row marker policy.
+    -- Nullable only for rows written before the policy was persisted.
+    representative_source_index integer
+                     CHECK (representative_source_index >= 0),
+    vertical_min     double precision,
+    vertical_max     double precision,
+    vertical_kind    text CHECK (vertical_kind IN ('depth', 'pressure')),
+    vertical_units   text,
+    -- Backward-compatible depth-only view. Pressure is never stored here.
     depth_min        double precision,
     depth_max        double precision,
     measurements     integer NOT NULL DEFAULT 0
 );
+
+ALTER TABLE observation_profile
+    ADD COLUMN IF NOT EXISTS representative_source_index integer;
+ALTER TABLE observation_profile
+    ADD COLUMN IF NOT EXISTS vertical_min double precision;
+ALTER TABLE observation_profile
+    ADD COLUMN IF NOT EXISTS vertical_max double precision;
+ALTER TABLE observation_profile
+    ADD COLUMN IF NOT EXISTS vertical_kind text;
+ALTER TABLE observation_profile
+    ADD COLUMN IF NOT EXISTS vertical_units text;
+
+UPDATE observation_profile AS profile
+SET vertical_min = COALESCE(profile.vertical_min, profile.depth_min),
+    vertical_max = COALESCE(profile.vertical_max, profile.depth_max),
+    vertical_kind = COALESCE(profile.vertical_kind, version.vertical_kind),
+    vertical_units = COALESCE(profile.vertical_units, version.vertical_units)
+FROM dataset_version AS version
+WHERE profile.import_id = version.import_id
+  AND (profile.vertical_min IS NULL OR profile.vertical_max IS NULL
+       OR profile.vertical_kind IS NULL OR profile.vertical_units IS NULL);
+
+UPDATE observation_profile
+SET depth_min = NULL, depth_max = NULL
+WHERE vertical_kind = 'pressure'
+  AND (depth_min IS NOT NULL OR depth_max IS NOT NULL);
 
 CREATE INDEX IF NOT EXISTS observation_profile_import
     ON observation_profile (import_id);

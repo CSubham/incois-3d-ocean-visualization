@@ -89,7 +89,7 @@ def model_dataset() -> xr.Dataset:
 
 
 def profile_dataset() -> xr.Dataset:
-    return xr.Dataset(
+    dataset = xr.Dataset(
         {
             "TEMP": (
                 ("observation",), [28.0, 27.5],
@@ -122,6 +122,11 @@ def profile_dataset() -> xr.Dataset:
             "CYCLE_NUMBER": ("observation", [12, 12]),
         },
     )
+    dataset["time"].encoding.update({
+        "units": "days since 1970-01-01",
+        "calendar": "proleptic_gregorian",
+    })
+    return dataset
 
 
 def model_package(import_id: str = MODEL_VERSION_ID,
@@ -216,6 +221,22 @@ def in_memory_case() -> QueryContractCase:
         time_end="2026-09-28T00:00:00+00:00",
         depth_min=0.0, depth_max=20.0,
         west=72.0, east=75.0, south=8.0, north=9.0,
+        vertical_min=0.0, vertical_max=20.0,
+        vertical_kind="depth", vertical_units="m",
+    )
+    profile_extent = DatasetExtent(
+        time_start=extent.time_start,
+        time_end=extent.time_end,
+        depth_min=None,
+        depth_max=None,
+        west=extent.west,
+        east=extent.east,
+        south=extent.south,
+        north=extent.north,
+        vertical_min=2.0,
+        vertical_max=10.0,
+        vertical_kind="pressure",
+        vertical_units="decibar",
     )
     summary = DatasetVersionSummary(
         id=MODEL_VERSION_ID,
@@ -275,7 +296,7 @@ def in_memory_case() -> QueryContractCase:
                 "2026-09-28T00:00:00.000000000",
                 "2026-09-28T00:00:00.000000000",
             ),
-            extent=extent,
+            extent=profile_extent,
             created_at="2026-09-28T00:00:00+00:00",
         ),
         dataset=profile_dataset(),
@@ -296,7 +317,7 @@ def in_memory_case() -> QueryContractCase:
             vertical_positive="down",
             variables=(VariableSummary("PSAL", "1e-3"),
                        VariableSummary("TEMP", "degree_Celsius")),
-            extent=extent,
+            extent=profile_extent,
             created_at="2026-09-28T00:00:00+00:00",
             provenance={"import_id": PROFILE_VERSION_ID,
                         "source": {"id": "incois_erddap"}},
@@ -359,7 +380,9 @@ def rebuild_live_catalogue(dsn: str) -> Mapping[str, Any]:
 
     schema_path = Path(__file__).parents[1] / "storage" / "schema.sql"
     with psycopg.connect(dsn) as connection:
-        connection.execute(schema_path.read_text(encoding="utf-8"))
+        schema = schema_path.read_text(encoding="utf-8")
+        connection.execute(schema)
+        connection.execute(schema)
         extension = connection.execute(
             "SELECT extversion FROM pg_extension WHERE extname = 'postgis'"
         ).fetchone()
@@ -376,15 +399,31 @@ def rebuild_live_catalogue(dsn: str) -> Mapping[str, Any]:
                 "AND table_name = 'dataset_version'"
             ).fetchall()
         }
+        profile_columns = {
+            row[0] for row in connection.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public' "
+                "AND table_name = 'observation_profile'"
+            ).fetchall()
+        }
     expected = {"dataset_version", "dataset_variable", "observation_profile"}
-    coordinate_columns = {"time_values", "depth_values"}
+    coordinate_columns = {
+        "time_values", "depth_values", "vertical_min", "vertical_max",
+        "vertical_kind", "vertical_units",
+    }
+    profile_semantic_columns = {
+        "representative_source_index", "vertical_min", "vertical_max",
+        "vertical_kind", "vertical_units",
+    }
     if (extension is None or not expected.issubset(tables)
-            or not coordinate_columns.issubset(version_columns)):
+            or not coordinate_columns.issubset(version_columns)
+            or not profile_semantic_columns.issubset(profile_columns)):
         raise RuntimeError("the live catalogue schema did not initialize")
     return {
         "postgis": str(extension[0]),
         "tables": sorted(expected),
         "coordinate_columns": sorted(coordinate_columns),
+        "profile_semantic_columns": sorted(profile_semantic_columns),
     }
 
 

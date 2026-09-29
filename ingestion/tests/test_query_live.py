@@ -150,8 +150,8 @@ def test_live_real_sources_persist_query_spatially_and_feed_s4(live_proof):
             "7902250"
         }
         assert set(profile["CYCLE_NUMBER"].values.astype(str)) == {"12"}
-        profile_longitude = float(profile["longitude"].values.mean())
-        profile_latitude = float(profile["latitude"].values.mean())
+        profile_longitude = float(profile["longitude"].values[0])
+        profile_latitude = float(profile["latitude"].values[0])
         assert -180.0 <= profile_longitude <= 180.0
         np.testing.assert_allclose(
             profile["PRES"].values,
@@ -172,6 +172,7 @@ def test_live_real_sources_persist_query_spatially_and_feed_s4(live_proof):
         profiles = connection.execute(
             """
             SELECT import_id, platform_id, cycle, measurements,
+                   representative_source_index,
                    ST_X(position::geometry) AS longitude,
                    ST_Y(position::geometry) AS latitude
             FROM observation_profile
@@ -193,6 +194,7 @@ def test_live_real_sources_persist_query_spatially_and_feed_s4(live_proof):
     assert profiles[0]["platform_id"] == "7902250"
     assert profiles[0]["cycle"] == "12"
     assert profiles[0]["measurements"] == 8
+    assert profiles[0]["representative_source_index"] == 0
     assert profiles[0]["longitude"] == pytest.approx(profile_longitude)
     assert profiles[0]["latitude"] == pytest.approx(profile_latitude)
 

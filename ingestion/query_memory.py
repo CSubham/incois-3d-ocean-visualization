@@ -211,7 +211,8 @@ def _profile_groups(version: InMemoryDatasetVersion
             version.summary.id, "one-dimensional platform and cycle identity")
     grouped: defaultdict[tuple[str, str], list[int]] = defaultdict(list)
     for index, (platform_id, cycle_id) in enumerate(zip(
-            _text_values(platform.values), _text_values(cycle.values))):
+            _text_values(platform.values), _text_values(cycle.values),
+            strict=True)):
         if platform_id and cycle_id:
             grouped[(platform_id, cycle_id)].append(index)
     return tuple(
@@ -232,16 +233,28 @@ def _profile_marker(
     selected = dataset.isel({sample_dim: positions})
     times = tuple(_timestamp(value)
                   for value in np.ravel(selected[names["time"]].values))
-    present_times = tuple(value for value in times if value is not None)
-    if not present_times:
-        raise UndeclaredReference(version.summary.id, "profile timestamps")
-    latitude = float(np.mean(selected[names["latitude"]].values))
-    longitude = _signed(float(np.mean(selected[names["longitude"]].values)))
+    latitudes = np.asarray(
+        selected[names["latitude"]].values, dtype=float).reshape(-1)
+    longitudes = np.asarray(
+        selected[names["longitude"]].values, dtype=float).reshape(-1)
+    representative = next((
+        index for index, (longitude, latitude, timestamp) in enumerate(zip(
+            longitudes, latitudes, times, strict=True))
+        if (np.isfinite(longitude) and -180.0 <= longitude <= 360.0
+            and np.isfinite(latitude) and -90.0 <= latitude <= 90.0
+            and timestamp is not None)
+    ), None)
+    if representative is None:
+        raise UndeclaredReference(
+            version.summary.id,
+            "a profile source row with valid longitude, latitude and time",
+        )
     return ProfileMarker(
         identity=identity,
-        longitude=longitude,
-        latitude=latitude,
-        observed_at=min(present_times),
+        longitude=_signed(float(longitudes[representative])),
+        latitude=float(latitudes[representative]),
+        observed_at=times[representative] or "",
+        representative_source_index=int(positions[representative]),
     )
 
 
@@ -272,6 +285,10 @@ def _observation_profile(
             for value in np.ravel(selected[names["time"]].values)
         ),
         variables=variables,
+        source_indices=tuple(int(index) for index in positions),
+        depth_source_dtype=str(selected[names["vertical"]].dtype),
+        time_source_dtype=str(selected[names["time"]].dtype),
+        time_encoding=_time_encoding(selected[names["time"]]),
     )
 
 
@@ -281,15 +298,18 @@ def _profile_variable(dataset: xr.Dataset, name: str, units: str | None,
         raise VariableUnavailable(version_id, name)
     quality_name = _quality_name(dataset, name)
     quality = dataset[quality_name] if quality_name is not None else None
+    values = dataset[name]
     return ProfileVariable(
         name=name,
         units=units,
-        values=_profile_values(dataset[name], sample_dim, version_id),
+        values=_profile_values(values, sample_dim, version_id),
+        source_dtype=str(values.dtype),
         quality_control_name=quality_name,
         quality_control=(
             _profile_values(quality, sample_dim, version_id)
             if quality is not None else None
         ),
+        qc_source_dtype=(str(quality.dtype) if quality is not None else None),
         qc_flag_values=(
             _qc_flag_values(quality, version_id)
             if quality is not None else None
@@ -445,6 +465,13 @@ def _signed(longitude: float) -> float:
 
 def _optional_text(value: Any) -> str | None:
     return str(value) if value is not None else None
+
+
+def _time_encoding(array: xr.DataArray) -> Mapping[str, str | None]:
+    return {
+        "units": _optional_text(array.encoding.get("units")),
+        "calendar": _optional_text(array.encoding.get("calendar")),
+    }
 
 
 __all__ = ["InMemoryDatasetVersion", "InMemoryModelFieldQuery"]

@@ -17,6 +17,7 @@ from ingestion.tests.query_support import model_package
 
 
 def _profiles(rows: int = 6) -> xr.Dataset:
+    first = rows // 2
     return xr.Dataset(
         {"TEMP": (("observation",), np.full(rows, 27.0), {"units": "degC"})},
         coords={
@@ -24,10 +25,17 @@ def _profiles(rows: int = 6) -> xr.Dataset:
                      np.array(["2024-09-01"] * rows, dtype="datetime64[ns]")),
             "latitude": ("observation", np.linspace(5, 15, rows)),
             "longitude": ("observation", np.linspace(70, 80, rows)),
-            "PRES": ("observation", np.linspace(0, 500, rows)),
+            "PRES": (
+                "observation", np.linspace(0, 500, rows),
+                {"units": "decibar"},
+            ),
             "PLATFORM_NUMBER": ("observation",
-                                np.array(["2902203"] * 3 + ["1902671"] * 3)),
-            "CYCLE_NUMBER": ("observation", np.array([1, 1, 1, 2, 2, 2])),
+                                np.array(["2902203"] * first
+                                         + ["1902671"] * (rows - first))),
+            "CYCLE_NUMBER": (
+                "observation",
+                np.array([1] * first + [2] * (rows - first)),
+            ),
         })
 
 
@@ -92,8 +100,12 @@ def test_observation_coordinate_rows_remain_in_the_managed_object():
 
 def test_the_extent_covers_what_was_stored():
     extent = _extent_of(_package(_profiles(), DatasetGeometry.PROFILE))
-    assert extent["depth_min"] == 0.0
-    assert extent["depth_max"] == 500.0
+    assert extent["vertical_min"] == 0.0
+    assert extent["vertical_max"] == 500.0
+    assert extent["vertical_kind"] == "pressure"
+    assert extent["vertical_units"] == "decibar"
+    assert "depth_min" not in extent
+    assert "depth_max" not in extent
     assert extent["time_start"].year == 2024
     assert "POLYGON((70.0 5.0" in extent["footprint"]
 
@@ -104,6 +116,29 @@ def test_rows_are_grouped_into_the_casts_they_came_from():
     assert len(profiles) == 2
     assert {p["platform_id"] for p in profiles} == {"2902203", "1902671"}
     assert all(p["measurements"] == 3 for p in profiles)
+    assert [p["representative_source_index"] for p in profiles] == [3, 0]
+    assert all(p["vertical_kind"] == "pressure" for p in profiles)
+    assert all(p["depth_min"] is None for p in profiles)
+
+
+def test_profile_marker_uses_one_complete_source_row_at_the_antimeridian():
+    dataset = _profiles(rows=2).assign_coords(
+        time=(
+            "observation",
+            np.array(["2024-09-02", "2024-09-01"], dtype="datetime64[ns]"),
+        ),
+        latitude=("observation", [8.0, 10.0]),
+        longitude=("observation", [179.0, -179.0]),
+        PLATFORM_NUMBER=("observation", ["float-a", "float-a"]),
+        CYCLE_NUMBER=("observation", ["7", "7"]),
+    )
+
+    [profile] = _profiles_in(_package(dataset, DatasetGeometry.PROFILE))
+
+    assert profile["longitude"] == 179.0
+    assert profile["latitude"] == 8.0
+    assert profile["observed_at"].isoformat().startswith("2024-09-02")
+    assert profile["representative_source_index"] == 0
 
 
 def test_without_an_identifier_rows_are_one_profile_not_invented_ones():
