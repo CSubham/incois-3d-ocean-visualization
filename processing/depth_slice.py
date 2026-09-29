@@ -137,8 +137,17 @@ class SliceReduction:
     maximum_cells: int | None
     source_shape: tuple[int, int]
     delivered_shape: tuple[int, int]
+    #: CF-style declaration of the aggregation, or None when factor is one.
+    cell_methods: str | None = None
+    #: Cell-area approximation used by the aggregation.
+    weighting: str | None = None
+    #: What the delivered coordinate at each reduced cell represents.
+    coordinate_meaning: str = (
+        "arithmetic centre of the source coordinate centres in the block")
     #: What each delivered source index names.
-    source_index_meaning: str = "first source cell of the block"
+    source_index_meaning: str = (
+        "first source cell of the block; the block covers up to factor "
+        "consecutive cells and is clipped at the source-axis end")
 
     @property
     def is_lossy(self) -> bool:
