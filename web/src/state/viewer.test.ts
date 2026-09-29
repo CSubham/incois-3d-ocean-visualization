@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { CatalogueVersion } from "../api/client";
-import { floatQuery, initialViewerState, surfaceSource, viewerReducer } from "./viewer";
+import {
+  describeSource, effectiveRange, floatQuery, initialViewerState, surfaceSource, surfaceSources,
+  viewerReducer,
+} from "./viewer";
 
 function version(id: string, variables: string[], times = 8, created = "2026-09-29T00:00:00Z"): CatalogueVersion {
   return {
@@ -22,7 +25,7 @@ describe("choosing the surface source", () => {
     const source = surfaceSource([regional, global, version("currents", ["water_u", "water_v"], 30)]);
     expect(source?.versionId).toBe("global");
     expect(source?.temperature).toBe("water_temp");
-    expect(source?.depth).toBe(0);
+    expect(source?.depths[0]).toBe(0);
     expect(surfaceSource([version("a", ["water_temp"], 4), version("b", ["water_temp"], 8)])?.versionId).toBe("b");
   });
 
@@ -63,5 +66,55 @@ describe("the viewer reducer", () => {
 
   it("asks for floats only when observations exist", () => {
     expect(floatQuery(loaded)).toBeNull();
+  });
+});
+
+
+describe("datasets, depths and display", () => {
+  const surface = { ...version("surface", ["water_temp"], 84), depth_values: [0] };
+  const deep = { ...version("deep", ["water_temp"], 8), depth_values: [1000, 0, 50, 100, 200, 500] };
+  deep.time_values = Array.from({ length: 8 }, (_, i) => `2024-08-${String(29 + i).padStart(2, "0")}T00:00:00.000000000`);
+  surface.time_values = Array.from({ length: 84 }, (_, i) => new Date(Date.UTC(2024, 7, 26, 3 * i)).toISOString().slice(0, 19));
+  const loaded = viewerReducer(initialViewerState(), { type: "catalogueLoaded", versions: [deep, surface], observations: null });
+
+  it("offers every temperature dataset, most time steps first, depths shallowest first", () => {
+    const sources = surfaceSources([deep, surface]);
+    expect(sources.map((s) => s.versionId)).toEqual(["surface", "deep"]);
+    expect(sources[1].depths).toEqual([0, 50, 100, 200, 500, 1000]);
+    expect(loaded.source?.versionId).toBe("surface");
+  });
+
+  it("describes what a dataset holds", () => {
+    const [s, d] = surfaceSources([deep, surface]);
+    expect(describeSource(s)).toBe("30–120°E, -30–30°N · 84 steps, every 3 h · sea surface");
+    expect(describeSource(d)).toBe("30–120°E, -30–30°N · 8 steps, daily · 6 depths to 1000 m");
+  });
+
+  it("starts a newly selected dataset at its first step and the surface, on fresh ranges", () => {
+    let state = viewerReducer(loaded, { type: "setTime", index: 40 });
+    state = viewerReducer(state, { type: "frameShown", layer: "temperature", range: { minimum: 20, maximum: 30 }, units: "degC", factor: 4 });
+    state = viewerReducer(state, { type: "selectSource", versionId: "deep" });
+    expect(state.timeIndex).toBe(0);
+    expect(state.depthIndex).toBe(0);
+    expect(state.ranges).toEqual({});
+  });
+
+  it("restarts the automatic range at a new depth, and keeps a user range above it", () => {
+    let state = viewerReducer(loaded, { type: "selectSource", versionId: "deep" });
+    state = viewerReducer(state, { type: "frameShown", layer: "temperature", range: { minimum: 20, maximum: 30 }, units: "degC", factor: 4 });
+    state = viewerReducer(state, { type: "setDepth", index: 5 });
+    expect(state.ranges).toEqual({});
+    state = viewerReducer(state, { type: "setDisplay", patch: { customRange: { minimum: 2, maximum: 8 } } });
+    state = viewerReducer(state, { type: "frameShown", layer: "temperature", range: { minimum: 3, maximum: 12 }, units: "degC", factor: 4 });
+    expect(effectiveRange(state)).toEqual({ minimum: 2, maximum: 8 });
+    state = viewerReducer(state, { type: "setDisplay", patch: { customRange: null } });
+    expect(effectiveRange(state)).toEqual({ minimum: 3, maximum: 12 });
+  });
+
+  it("labels a cross-fade with the two real times it joins", () => {
+    let state = viewerReducer(loaded, { type: "transitionStarted", from: "a", to: "b" });
+    expect(state.transition).toEqual({ from: "a", to: "b" });
+    state = viewerReducer(state, { type: "transitionEnded" });
+    expect(state.transition).toBeNull();
   });
 });

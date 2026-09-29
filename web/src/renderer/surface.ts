@@ -42,6 +42,8 @@ export interface SurfaceStyle {
   palette: PaletteName;
   range: { minimum: number; maximum: number };
   scale: ScaleKind;
+  /** Layer opacity, 0..1 (UIC-006). */
+  opacity: number;
 }
 
 /** How far any coordinate may sit from its place on the ideal regular grid,
@@ -138,7 +140,7 @@ export function gridGeometry(longitude: NumericArray, latitude: NumericArray): G
 
 /** RGBA pixels, north row first, one pixel per source cell. */
 export function rasterise(values: NumericArray, mask: Uint8Array, geometry: GridGeometry,
-                          style: SurfaceStyle): Uint8ClampedArray<ArrayBuffer> {
+                          style: Pick<SurfaceStyle, "palette" | "range" | "scale">): Uint8ClampedArray<ArrayBuffer> {
   const { columns, rows } = geometry;
   if (values.length !== columns * rows || mask.length !== values.length) {
     throw new SurfaceError("the field values do not match its grid");

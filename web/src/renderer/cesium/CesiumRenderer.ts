@@ -38,7 +38,16 @@ const POINT_PIXELS = 4;
 const MARKER_PIXELS = 11;
 const MARKER_FILL = Color.fromCssColorString("#ffcf5a");
 const REGION_OUTLINE = Color.fromCssColorString("#9fd3ea").withAlpha(0.9);
-const SURFACE_ALPHA = 0.92;
+/** Two images and a blend factor: a display transition between two real
+ *  frames on the GPU. Land is transparent in both, so it stays clear. */
+const SURFACE_BLEND_SOURCE = `
+czm_material czm_getMaterial(czm_materialInput materialInput) {
+  czm_material material = czm_getDefaultMaterial(materialInput);
+  vec4 colour = mix(texture(from, materialInput.st), texture(to, materialInput.st), blend);
+  material.diffuse = colour.rgb;
+  material.alpha = colour.a * opacity;
+  return material;
+}`;
 /** The surface sits just above the sea so it never z-fights the globe;
  *  detail sits above the whole-field layer. Invisible at viewing distances. */
 const SURFACE_HEIGHT_M: Record<"base" | "detail", number> = { base: 1_500, detail: 3_000 };
@@ -49,6 +58,10 @@ const ARROW_PIXELS = 22;
 interface Surface {
   primitive: Primitive;
   material: Material;
+  /** The image the surface shows (or is fading to). */
+  canvas: HTMLCanvasElement;
+  /** A running cross-fade, cancelled by the next hand-over. */
+  fade?: number;
   /** Where the primitive lies; a field on the same rectangle swaps its image only. */
   rectangleKey: string;
   geometry: GridGeometry;
@@ -277,7 +290,8 @@ export class CesiumRenderer implements Renderer {
     return { status: "applied" };
   }
 
-  async showSurface(field: SurfaceField, style: SurfaceStyle, slot: SurfaceSlot = "base"): Promise<SurfaceOutcome> {
+  async showSurface(field: SurfaceField, style: SurfaceStyle, slot: SurfaceSlot = "base",
+                    options: { blendMs?: number } = {}): Promise<SurfaceOutcome> {
     const viewer = this.viewer;
     if (!viewer) return { status: "refused", reason: "the 3D view is not available" };
     let geometry: GridGeometry;
@@ -300,15 +314,19 @@ export class CesiumRenderer implements Renderer {
     const rectangleKey = [geometry.imageWest, geometry.south, geometry.imageEast, geometry.north].join(",");
     const current = this.surfaces[slot];
     if (current && current.rectangleKey === rectangleKey) {
-      // Same place, new values (an animation step): swap the image in place.
-      // The old texture is drawn until the new one is uploaded on the next
-      // frame, so there is never an empty or blank frame.
-      current.material.uniforms.image = canvas;
+      // Same place, new values: swap the image in place. The old texture is
+      // drawn until the new one is uploaded, so no frame is ever blank.
+      this.swapImage(viewer, current, canvas, style.opacity, options.blendMs ?? 0);
       current.geometry = geometry;
       current.field = field;
     } else {
-      const material = Material.fromType("Image", {
-        image: canvas, color: new Color(1, 1, 1, SURFACE_ALPHA),
+      const material = new Material({
+        fabric: {
+          type: "SurfaceBlend",
+          uniforms: { from: canvas, to: canvas, blend: 1, opacity: style.opacity },
+          source: SURFACE_BLEND_SOURCE,
+        },
+        translucent: true,
       });
       const primitive = new Primitive({
         geometryInstances: new GeometryInstance({
@@ -332,7 +350,7 @@ export class CesiumRenderer implements Renderer {
         return { status: "superseded" };
       }
       const previous = this.surfaces[slot];
-      this.surfaces[slot] = { primitive, material, rectangleKey, geometry, field };
+      this.surfaces[slot] = { primitive, material, canvas, rectangleKey, geometry, field };
       if (previous) viewer.scene.primitives.remove(previous.primitive);   // releases GPU resources
     }
     this.probedCell = null;
@@ -344,11 +362,44 @@ export class CesiumRenderer implements Renderer {
     return { status: "shown", shownCells: field.values.length - hidden, hiddenMissingCells: hidden };
   }
 
+  /** Point the surface at a new image, fading over ``blendMs`` if asked. */
+  private swapImage(viewer: Viewer, surface: Surface, canvas: HTMLCanvasElement,
+                    opacity: number, blendMs: number): void {
+    if (surface.fade !== undefined) cancelAnimationFrame(surface.fade);
+    surface.fade = undefined;
+    const uniforms = surface.material.uniforms;
+    uniforms.opacity = opacity;
+    if (blendMs <= 0 || surface.canvas === canvas) {
+      uniforms.from = canvas;
+      uniforms.to = canvas;
+      uniforms.blend = 1;
+    } else {
+      uniforms.from = surface.canvas;
+      uniforms.to = canvas;
+      uniforms.blend = 0;
+      const started = performance.now();
+      const step = () => {
+        const t = Math.min(1, (performance.now() - started) / blendMs);
+        uniforms.blend = t;
+        viewer.scene.requestRender();
+        if (t < 1) {
+          surface.fade = requestAnimationFrame(step);
+        } else {
+          surface.fade = undefined;
+          uniforms.from = canvas;   // one texture again once the fade ends
+        }
+      };
+      surface.fade = requestAnimationFrame(step);
+    }
+    surface.canvas = canvas;
+  }
+
   clearSurface(slot?: SurfaceSlot): void {
     for (const which of slot ? [slot] : (["base", "detail"] as const)) {
       this.surfaceGeneration[which]++;   // an image still loading is dropped
       const surface = this.surfaces[which];
       if (!surface || !this.viewer) continue;
+      if (surface.fade !== undefined) cancelAnimationFrame(surface.fade);
       this.viewer.scene.primitives.remove(surface.primitive);   // releases GPU resources
       delete this.surfaces[which];
     }

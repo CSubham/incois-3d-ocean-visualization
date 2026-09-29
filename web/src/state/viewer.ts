@@ -3,7 +3,7 @@
 // reports it drawn, so state always describes what is on screen.
 
 import type { CatalogueVersion, Failure, MarkerQuery, ObservationVersion } from "../api/client";
-import type { Extent, RendererEvent, SurfaceSample } from "../renderer/contract";
+import type { Extent, PaletteName, RendererEvent, ScaleKind, SurfaceSample } from "../renderer/contract";
 import type { ProfileState } from "./store";
 
 export type LayerKind = "temperature" | "currents";
@@ -18,8 +18,8 @@ export interface SurfaceSource {
   versionId: string;
   dataset: string;
   times: string[];
-  /** The shallowest stored level: the sea surface for this viewer. */
-  depth: number;
+  /** Stored levels, shallowest first; the first is the sea surface. */
+  depths: number[];
   area: { west: number; east: number; south: number; north: number };
   temperature: string | null;
   currents: { eastward: string; northward: string } | null;
@@ -34,9 +34,26 @@ export interface Floats {
   failure?: Failure;
 }
 
+/** Declarative display state (UIC-004 to UIC-006); never reprocesses data. */
+export interface Display {
+  palette: PaletteName;
+  /** A user-set colour range; null follows the layer's automatic range. */
+  customRange: Range | null;
+  scale: ScaleKind;
+  opacity: number;
+  /** Cross-fade between consecutive real frames while stepping. */
+  smooth: boolean;
+}
+
 export interface ViewerState {
   catalogue: { phase: "loading" | "ready" | "failed"; message?: string };
+  /** Every stored version able to drive the view, preferred first. */
+  sources: SurfaceSource[];
   source: SurfaceSource | null;
+  depthIndex: number;
+  display: Display;
+  /** A cross-fade on screen between two real frames: its label says so. */
+  transition: { from: string; to: string } | null;
   observations: ObservationVersion[] | null;
   layer: LayerKind;
   timeIndex: number;
@@ -63,6 +80,11 @@ export type ViewerAction =
   | { type: "catalogueLoaded"; versions: CatalogueVersion[]; observations: ObservationVersion[] | null }
   | { type: "catalogueFailed"; message: string }
   | { type: "selectLayer"; layer: LayerKind }
+  | { type: "selectSource"; versionId: string }
+  | { type: "setDepth"; index: number }
+  | { type: "setDisplay"; patch: Partial<Display> }
+  | { type: "transitionStarted"; from: string; to: string }
+  | { type: "transitionEnded" }
   | { type: "setTime"; index: number }
   | { type: "togglePlay" }
   /** Advance one step while playing; wraps to the first step. */
@@ -88,7 +110,11 @@ export type ViewerAction =
 export function initialViewerState(): ViewerState {
   return {
     catalogue: { phase: "loading" },
+    sources: [],
     source: null,
+    depthIndex: 0,
+    display: { palette: "thermal", customRange: null, scale: "linear", opacity: 0.92, smooth: true },
+    transition: null,
     observations: [],
     layer: "temperature",
     timeIndex: 0,
@@ -118,9 +144,9 @@ function currentsOf(version: CatalogueVersion): SurfaceSource["currents"] {
   return pair ? { eastward: pair[0], northward: pair[1] } : null;
 }
 
-/** The gridded version best suited to the surface view: sea temperature
- *  first, then the widest area covered, then the most time steps. */
-export function surfaceSource(versions: CatalogueVersion[]): SurfaceSource | null {
+/** Every gridded version able to drive the surface view, preferred first:
+ *  sea temperature, then the widest area, then the most time steps. */
+export function surfaceSources(versions: CatalogueVersion[]): SurfaceSource[] {
   const candidates = versions.filter((v) =>
     v.geometry === "grid" && (v.time_values?.length ?? 0) > 0 && (v.depth_values?.length ?? 0) > 0
     && v.extent.west !== null && v.extent.east !== null && v.extent.south !== null && v.extent.north !== null
@@ -133,17 +159,40 @@ export function surfaceSource(versions: CatalogueVersion[]): SurfaceSource | nul
     const [x, y] = [score(a), score(b)];
     return y[0] - x[0] || y[1] - x[1] || y[2] - x[2] || y[3].localeCompare(x[3]);
   });
-  const best = candidates[0];
-  if (!best) return null;
-  return {
+  return candidates.map((best) => ({
     versionId: best.id,
     dataset: best.dataset,
     times: best.time_values!,
-    depth: Math.min(...best.depth_values!),
+    depths: [...best.depth_values!].sort((a, b) => a - b),
     area: { west: best.extent.west!, east: best.extent.east!, south: best.extent.south!, north: best.extent.north! },
     temperature: temperatureOf(best),
     currents: currentsOf(best),
-  };
+  }));
+}
+
+/** The preferred source, or null when none can drive the view. */
+export function surfaceSource(versions: CatalogueVersion[]): SurfaceSource | null {
+  return surfaceSources(versions)[0] ?? null;
+}
+
+/** "Global · 84 steps, every 3 h · 6 depths to 1000 m": what a source holds. */
+export function describeSource(source: SurfaceSource): string {
+  const { west, east, south, north } = source.area;
+  const where = east - west >= 359 ? "Global"
+    : `${Math.round(west)}–${Math.round(east)}°E, ${Math.round(south)}–${Math.round(north)}°N`;
+  const times = source.times.map((t) => Date.parse(t.replace(/\.\d+$/, "") + (/[Z+-]\d*:?\d*$/.test(t) ? "" : "Z")));
+  const hours = times.length > 1 ? Math.round((times[1] - times[0]) / 3_600_000) : 0;
+  const cadence = times.length < 2 ? "1 step"
+    : `${times.length} steps, ${hours % 24 === 0 ? (hours === 24 ? "daily" : `every ${hours / 24} days`) : `every ${hours} h`}`;
+  const depths = source.depths.length > 1
+    ? `${source.depths.length} depths to ${Math.round(source.depths[source.depths.length - 1])} m`
+    : "sea surface";
+  return `${where} · ${cadence} · ${depths}`;
+}
+
+/** The colour range in force: the user's, else the layer's automatic one. */
+export function effectiveRange(state: ViewerState): Range | undefined {
+  return state.display.customRange ?? state.ranges[state.layer];
 }
 
 export function available(source: SurfaceSource | null, layer: LayerKind): boolean {
@@ -166,10 +215,11 @@ export function floatQuery(state: ViewerState): MarkerQuery | null {
 export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerState {
   switch (action.type) {
     case "catalogueLoaded": {
-      const source = surfaceSource(action.versions);
+      const sources = surfaceSources(action.versions);
+      const source = sources[0] ?? null;
       const layer: LayerKind = available(source, "temperature") ? "temperature" : "currents";
       return {
-        ...state, source, layer, timeIndex: 0, observations: action.observations,
+        ...state, sources, source, layer, timeIndex: 0, depthIndex: 0, observations: action.observations,
         catalogue: source
           ? { phase: "ready" }
           : { phase: "failed", message: "no stored model version has sea temperature or currents on a regular grid" },
@@ -177,6 +227,27 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
     }
     case "catalogueFailed":
       return { ...state, catalogue: { phase: "failed", message: action.message } };
+    case "selectSource": {
+      const source = state.sources.find((s) => s.versionId === action.versionId);
+      if (!source || source === state.source) return state;
+      // A new dataset starts at its first step and surface, on fresh ranges.
+      return {
+        ...state, source, timeIndex: 0, depthIndex: 0, playing: false, ranges: {}, probe: null,
+        layer: available(source, state.layer) ? state.layer : available(source, "temperature") ? "temperature" : "currents",
+      };
+    }
+    case "setDepth": {
+      const count = state.source?.depths.length ?? 0;
+      if (action.index < 0 || action.index >= count || action.index === state.depthIndex) return state;
+      // Deeper water spans a different range: the automatic range restarts.
+      return { ...state, depthIndex: action.index, ranges: {}, probe: null };
+    }
+    case "setDisplay":
+      return { ...state, display: { ...state.display, ...action.patch } };
+    case "transitionStarted":
+      return { ...state, transition: { from: action.from, to: action.to } };
+    case "transitionEnded":
+      return { ...state, transition: null };
     case "selectLayer":
       return available(state.source, action.layer) ? { ...state, layer: action.layer, probe: null } : state;
     case "setTime": {

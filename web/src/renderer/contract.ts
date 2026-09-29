@@ -144,7 +144,11 @@ export interface Renderer {
   applyDisplay(display: DisplayState): DisplayOutcome;
   /** Replace the draped surface layer once the new image is ready, so an
    *  animation never flashes an empty globe. */
-  showSurface(field: SurfaceField, style: SurfaceStyle, slot?: SurfaceSlot): Promise<SurfaceOutcome>;
+  /** ``blendMs`` > 0 cross-fades from the previous image on the same
+   *  rectangle (a display transition between two real frames; the readout
+   *  always reports the new, real frame). */
+  showSurface(field: SurfaceField, style: SurfaceStyle, slot?: SurfaceSlot,
+              options?: { blendMs?: number }): Promise<SurfaceOutcome>;
   /** Clears one slot, or both when none is named. */
   clearSurface(slot?: SurfaceSlot): void;
   showArrows(arrows: ArrowSet, maximumSpeed: number): MarkerOutcome;

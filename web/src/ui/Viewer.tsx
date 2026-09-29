@@ -3,9 +3,16 @@
 // an exact readout of the cell under the pointer. All side effects live
 // here; the reducer stays pure and the renderer is reached only through its
 // facade.
+//
+// Every layer is requested at the renderer's declared cell budget and
+// fitted to it by S4: the whole field as the base layer, and the part in
+// view as a finer detail layer. Stepping in time may cross-fade between two
+// consecutive real frames; that is a display transition, labelled as one,
+// and the readout always reports a real frame.
 
 import {
-  ActionIcon, Alert, Badge, Group, Loader, Paper, Slider, Stack, Switch, Text, Title,
+  ActionIcon, Alert, Badge, Button, Divider, Group, Loader, NumberInput, Paper,
+  SegmentedControl, Select, Slider, Stack, Switch, Text, Title,
 } from "@mantine/core";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
@@ -13,13 +20,15 @@ import { ServiceError, type DataClient } from "../api/client";
 import { decodeMarkers, decodeProfile } from "../api/observationWire";
 import { decodeSlice, decodeVector } from "../api/sliceWire";
 import { WireError } from "../api/wire";
-import { cssGradient } from "../renderer/colour";
-import type { Extent, PaletteName, Renderer, RendererFactory, SurfaceField } from "../renderer/contract";
+import { cssGradient, PALETTES } from "../renderer/colour";
+import type {
+  Extent, PaletteName, Renderer, RendererFactory, ScaleKind, SurfaceField, SurfaceSlot,
+} from "../renderer/contract";
 import { robustRange } from "../renderer/surface";
 import { detailExtent } from "../state/detail";
 import {
-  available, floatQuery, initialViewerState, viewerReducer, type LayerKind, type Range,
-  type SurfaceSource,
+  available, describeSource, effectiveRange, floatQuery, initialViewerState, viewerReducer,
+  type LayerKind, type Range, type SurfaceSource,
 } from "../state/viewer";
 import { formatUtc } from "./format";
 import { ProfileDrawer } from "./ProfileDrawer";
@@ -30,15 +39,18 @@ interface Props {
   createRenderer: RendererFactory;
 }
 
-const LAYERS: Record<LayerKind, { title: string; palette: PaletteName }> = {
-  temperature: { title: "Sea surface temperature", palette: "thermal" },
-  currents: { title: "Surface current speed", palette: "speed" },
+const LAYER_TITLES: Record<LayerKind, string> = {
+  temperature: "Sea temperature",
+  currents: "Current speed",
 };
 
-/** Seconds each time step stays on screen while playing. */
+/** A cross-fade between two real frames, then a hold on the real frame. */
+const BLEND_MS = 750;
+const HOLD_MS = 450;
+/** Time on screen per step when cross-fading is off. */
 const STEP_MS = 900;
-/** Decoded frames kept in memory; a current frame is about 30 MB. */
-const CACHED_FRAMES = 12;
+/** Decoded frames kept in memory; a global frame is about 6 MB. */
+const CACHED_FRAMES = 16;
 
 interface Frame {
   field: SurfaceField;
@@ -55,6 +67,8 @@ function failureOf(error: unknown) {
       : { code: "network", message: "the server could not be reached" };
 }
 
+const extentKey = (e: Extent) => `${e.west},${e.east},${e.south},${e.north}`;
+
 export function Viewer({ client, createRenderer }: Props) {
   const [renderer] = useState<Renderer>(createRenderer);
   const globeRef = useRef<HTMLDivElement>(null);
@@ -62,15 +76,15 @@ export function Viewer({ client, createRenderer }: Props) {
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  // Frames by layer and time. Promises are cached so a frame requested twice
-  // (shown, then prefetched) is fetched once.
+  // Frames by source, layer, depth, time, extent and budget. Promises are
+  // cached so a frame requested twice (shown, then prefetched) is fetched once.
   const frames = useRef(new Map<string, Promise<Frame>>());
-  const frame = useCallback((source: SurfaceSource, layer: LayerKind, time: string,
+  const frame = useCallback((source: SurfaceSource, layer: LayerKind, depth: number, time: string,
                              extent: Extent, budget: number): Promise<Frame> => {
-    const key = `${source.versionId}|${layer}|${time}|${extent.west},${extent.east},${extent.south},${extent.north}|${budget}`;
+    const key = `${source.versionId}|${layer}|${depth}|${time}|${extentKey(extent)}|${budget}`;
     const cached = frames.current.get(key);
     if (cached) return cached;
-    const window = { dataset_version_id: source.versionId, time, depth: source.depth, ...extent };
+    const window = { dataset_version_id: source.versionId, time, depth, ...extent };
     const loading = (async (): Promise<Frame> => {
       if (layer === "temperature") {
         const descriptor = await client.depthSlice(window, source.temperature!, budget);
@@ -128,7 +142,10 @@ export function Viewer({ client, createRenderer }: Props) {
     return () => controller.abort();
   }, [client]);
 
-  const { source, layer, timeIndex } = state;
+  const { source, layer, timeIndex, display } = state;
+  const depth = source?.depths[state.depthIndex] ?? 0;
+  const styleKey = `${display.palette}|${display.scale}|${display.opacity}|${display.customRange?.minimum}|${display.customRange?.maximum}`;
+
   useEffect(() => {
     if (source) renderer.command({ type: "flyTo", ...source.area });
   }, [renderer, source]);
@@ -136,77 +153,102 @@ export function Viewer({ client, createRenderer }: Props) {
   // The view budget S4 fits every layer to: this renderer's declared figure.
   const budget = renderer.capabilities.maximumSurfaceCells;
 
-  // The whole field at the chosen time, fitted to the budget; a newer choice
-  // supersedes it.
+  // What each slot last showed: a change of time on the same place is a
+  // step (and may cross-fade); anything else swaps at once.
+  const lastShown = useRef<Partial<Record<SurfaceSlot, { place: string; time: string }>>>({});
+  const transitionTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  /** Fetch, style and hand one layer to the renderer; resolves its factor. */
+  const showLayer = useCallback(async (slot: SurfaceSlot, extent: Extent, isCurrent: () => boolean) => {
+    const current = stateRef.current;
+    const src = current.source!;
+    const lyr = current.layer;
+    const dep = src.depths[current.depthIndex];
+    const time = src.times[current.timeIndex];
+    const loaded = await frame(src, lyr, dep, time, extent, budget);
+    if (!isCurrent()) return null;
+    // The automatic range is fixed by the first frame of a layer; a user
+    // range overrides it for display without replacing it.
+    const autoRange = stateRef.current.ranges[lyr] ?? loaded.range ?? { minimum: 0, maximum: 1 };
+    const range = current.display.customRange ?? autoRange;
+    const place = `${src.versionId}|${lyr}|${dep}|${extentKey(extent)}`;
+    const last = lastShown.current[slot];
+    const stepping = last !== undefined && last.place === place && last.time !== time;
+    const blendMs = current.display.smooth && stepping ? BLEND_MS : 0;
+    const outcome = await renderer.showSurface(loaded.field, {
+      palette: current.display.palette, range, scale: current.display.scale, opacity: current.display.opacity,
+    }, slot, { blendMs });
+    if (!isCurrent() || outcome.status === "superseded") return null;
+    if (outcome.status === "refused") throw new RefusedLayer(outcome.reason);
+    lastShown.current[slot] = { place, time };
+    if (slot === "base" && blendMs > 0 && last) {
+      dispatch({ type: "transitionStarted", from: last.time, to: time });
+      clearTimeout(transitionTimer.current);
+      transitionTimer.current = setTimeout(() => dispatch({ type: "transitionEnded" }), blendMs);
+    }
+    return { loaded, autoRange };
+  }, [renderer, frame, budget]);
+
+  // The whole field, fitted to the budget; a newer choice supersedes it.
   const shownSequence = useRef(0);
   useEffect(() => {
     if (!source || !available(source, layer)) return;
     const sequence = ++shownSequence.current;
-    const time = source.times[timeIndex];
     dispatch({ type: "frameStarted" });
     (async () => {
       try {
-        const loaded = await frame(source, layer, time, source.area, budget);
-        if (sequence !== shownSequence.current) return;
-        const range = stateRef.current.ranges[layer] ?? loaded.range ?? { minimum: 0, maximum: 1 };
-        const outcome = await renderer.showSurface(loaded.field, { palette: LAYERS[layer].palette, range, scale: "linear" }, "base");
-        if (sequence !== shownSequence.current || outcome.status === "superseded") return;
-        if (outcome.status === "refused") {
-          dispatch({ type: "frameFailed", failure: { code: "unsupported_product", message: outcome.reason } });
-          return;
-        }
-        dispatch({ type: "frameShown", layer, range, units: loaded.field.units, factor: loaded.factor });
+        const shown = await showLayer("base", source.area, () => sequence === shownSequence.current);
+        if (!shown) return;
+        dispatch({ type: "frameShown", layer, range: shown.autoRange, units: shown.loaded.field.units, factor: shown.loaded.factor });
         // Fetch the next step ahead so playback does not wait on the network.
         const next = source.times[(timeIndex + 1) % source.times.length];
-        void frame(source, layer, next, source.area, budget).catch(() => undefined);
+        void frame(source, layer, depth, next, source.area, budget).catch(() => undefined);
       } catch (error) {
-        if (sequence === shownSequence.current) dispatch({ type: "frameFailed", failure: failureOf(error) });
+        if (sequence !== shownSequence.current) return;
+        dispatch({ type: "frameFailed", failure: error instanceof RefusedLayer
+          ? { code: "unsupported_product", message: error.message } : failureOf(error) });
       }
     })();
-  }, [renderer, frame, budget, source, layer, timeIndex]);
+  }, [showLayer, frame, budget, source, layer, timeIndex, depth, styleKey]);
 
   // The part in view at finer resolution, when the whole-field layer is
   // coarser than the source and most of the field is out of view.
   const detail = useMemo(
     () => (source ? detailExtent(source.area, state.view, state.baseFactor) : null),
     [source, state.view, state.baseFactor]);
-  const detailKey = detail ? `${detail.west},${detail.east},${detail.south},${detail.north}` : "";
+  const detailKey = detail ? extentKey(detail) : "";
   const detailSequence = useRef(0);
   useEffect(() => {
     const sequence = ++detailSequence.current;
     if (!source || !detail || !available(source, layer)) {
       renderer.clearSurface("detail");
+      delete lastShown.current.detail;
       dispatch({ type: "detailCleared" });
       return;
     }
-    const time = source.times[timeIndex];
     dispatch({ type: "detailStarted" });
     (async () => {
       try {
-        const loaded = await frame(source, layer, time, detail, budget);
-        if (sequence !== detailSequence.current) return;
-        const range = stateRef.current.ranges[layer] ?? loaded.range ?? { minimum: 0, maximum: 1 };
-        const outcome = await renderer.showSurface(loaded.field, { palette: LAYERS[layer].palette, range, scale: "linear" }, "detail");
-        if (sequence !== detailSequence.current || outcome.status === "superseded") return;
-        dispatch(outcome.status === "shown"
-          ? { type: "detailShown", factor: loaded.factor }
-          : { type: "detailFailed", failure: { code: "unsupported_product", message: outcome.reason } });
+        const shown = await showLayer("detail", detail, () => sequence === detailSequence.current);
+        if (shown) dispatch({ type: "detailShown", factor: shown.loaded.factor });
       } catch (error) {
-        if (sequence === detailSequence.current) dispatch({ type: "detailFailed", failure: failureOf(error) });
+        if (sequence !== detailSequence.current) return;
+        dispatch({ type: "detailFailed", failure: error instanceof RefusedLayer
+          ? { code: "unsupported_product", message: error.message } : failureOf(error) });
       }
     })();
     // detail is read through detailKey, which changes exactly when it does
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderer, frame, budget, source, layer, timeIndex, detailKey]);
+  }, [renderer, showLayer, source, layer, timeIndex, depth, styleKey, detailKey]);
 
   // Playback advances only once the current step is on screen.
   useEffect(() => {
     if (!state.playing || state.frame.phase !== "shown") return;
-    const timer = setTimeout(() => dispatch({ type: "tick" }), STEP_MS);
+    const timer = setTimeout(() => dispatch({ type: "tick" }), display.smooth ? BLEND_MS + HOLD_MS : STEP_MS);
     return () => clearTimeout(timer);
-  }, [state.playing, state.frame.phase, timeIndex]);
+  }, [state.playing, state.frame.phase, timeIndex, display.smooth]);
 
-  // Argo floats inside the viewed area.
+  // Argo floats over their own dataset's extent.
   const floatsEnabled = state.floats.enabled;
   useEffect(() => {
     if (!floatsEnabled) {
@@ -215,7 +257,7 @@ export function Viewer({ client, createRenderer }: Props) {
     }
     const query = floatQuery(stateRef.current);
     if (!query) {
-      dispatch({ type: "floatsFailed", failure: { code: "observations_unavailable", message: "no observation dataset covers this area" } });
+      dispatch({ type: "floatsFailed", failure: { code: "observations_unavailable", message: "no observation dataset is stored" } });
       return;
     }
     const controller = new AbortController();
@@ -257,28 +299,93 @@ export function Viewer({ client, createRenderer }: Props) {
     return () => controller.abort();
   }, [client, pick]);
 
-  const range = state.ranges[layer];
+  const range = effectiveRange(state);
   const shownFactor = state.detail.phase === "shown" ? state.detail.factor : state.baseFactor;
   const units = displayUnits(state.units[layer] ?? "");
   const time = source?.times[timeIndex];
   const problem = state.renderer.phase !== "ok" ? state.renderer.reason
     : state.catalogue.phase === "failed" ? state.catalogue.message
       : state.frame.phase === "failed" ? state.frame.failure?.message : undefined;
+  const depthLabel = depth === 0 ? "surface" : `${Math.round(depth)} m`;
 
   return (
     <div className="viewer">
       <div className="globe" ref={globeRef} aria-label="3D globe view" />
 
       <div className="overlay top-left">
-        <Paper className="glass" p="md" w={300} shadow="lg">
+        <Paper className="glass" p="md" w={320} shadow="lg">
           <Stack gap="sm">
             <div>
               <Title order={1} size="h4">INCOIS Ocean Viewer</Title>
               <Text size="xs" c="dimmed">
-                {source ? `${source.dataset} · sea surface · ${source.times.length} time steps` : "Loading the catalogue…"}
+                {source ? `HYCOM ${source.dataset} · ${LAYER_TITLES[layer].toLowerCase()} · ${depthLabel}` : "Loading the catalogue…"}
               </Text>
             </div>
-            <Text fw={600} size="sm">{LAYERS[layer].title}</Text>
+            {state.sources.length > 1 && (
+              <Select
+                label="Dataset" size="xs" allowDeselect={false}
+                value={source?.versionId ?? null}
+                onChange={(versionId) => versionId && dispatch({ type: "selectSource", versionId })}
+                data={state.sources.map((s) => ({ value: s.versionId, label: describeSource(s) }))}
+              />
+            )}
+            {source && source.depths.length > 1 && (
+              <Select
+                label="Depth" size="xs" allowDeselect={false}
+                value={String(state.depthIndex)}
+                onChange={(index) => index !== null && dispatch({ type: "setDepth", index: Number(index) })}
+                data={source.depths.map((d, index) => ({ value: String(index), label: d === 0 ? "Surface (0 m)" : `${Math.round(d)} m` }))}
+              />
+            )}
+            <Divider label="Display" labelPosition="left" />
+            <Group grow gap="xs">
+              <Select
+                label="Palette" size="xs" allowDeselect={false}
+                value={display.palette}
+                onChange={(palette) => palette && dispatch({ type: "setDisplay", patch: { palette: palette as PaletteName } })}
+                data={PALETTES.map((p) => ({ value: p, label: p[0].toUpperCase() + p.slice(1) }))}
+              />
+              <div>
+                <Text size="xs" fw={500} mb={4}>Scale</Text>
+                <SegmentedControl
+                  size="xs" fullWidth value={display.scale}
+                  onChange={(scale) => dispatch({ type: "setDisplay", patch: { scale: scale as ScaleKind } })}
+                  data={[{ value: "linear", label: "Linear" }, { value: "log", label: "Log" }]}
+                />
+              </div>
+            </Group>
+            <Group gap="xs" align="flex-end" wrap="nowrap">
+              <NumberInput
+                label={`Min (${units})`} size="xs" decimalScale={2} step={0.5}
+                value={range?.minimum ?? ""}
+                onChange={(v) => typeof v === "number" && range && dispatch({ type: "setDisplay", patch: { customRange: { minimum: v, maximum: range.maximum } } })}
+              />
+              <NumberInput
+                label={`Max (${units})`} size="xs" decimalScale={2} step={0.5}
+                value={range?.maximum ?? ""}
+                onChange={(v) => typeof v === "number" && range && dispatch({ type: "setDisplay", patch: { customRange: { minimum: range.minimum, maximum: v } } })}
+              />
+              <Button size="xs" variant="light" disabled={!display.customRange}
+                onClick={() => dispatch({ type: "setDisplay", patch: { customRange: null } })}>
+                Auto
+              </Button>
+            </Group>
+            <div>
+              <Text size="xs" fw={500}>Opacity</Text>
+              <Slider
+                size="sm" min={0.2} max={1} step={0.05} value={display.opacity}
+                label={(v) => `${Math.round(v * 100)}%`}
+                onChange={(opacity) => dispatch({ type: "setDisplay", patch: { opacity } })}
+              />
+            </div>
+            <Switch
+              label="Smooth transitions between time steps"
+              description="A visual cross-fade between two real frames; values always come from a real frame."
+              size="xs"
+              checked={display.smooth}
+              onChange={() => dispatch({ type: "setDisplay", patch: { smooth: !display.smooth } })}
+            />
+            <Divider label="Observations" labelPosition="left" />
             <Group justify="space-between">
               <Switch
                 label="Argo floats"
@@ -306,7 +413,7 @@ export function Viewer({ client, createRenderer }: Props) {
       {state.probe && (
         <div className="overlay top-right">
           <Paper className="glass mono" p="sm" shadow="lg">
-            <Text size="xs" c="dimmed">{formatPosition(state.probe.longitude, state.probe.latitude)}</Text>
+            <Text size="xs" c="dimmed">{formatPosition(state.probe.longitude, state.probe.latitude)} · {depthLabel}</Text>
             <Text fw={600}>
               {state.probe.value.toFixed(2)} {displayUnits(state.probe.units)}
             </Text>
@@ -314,6 +421,7 @@ export function Viewer({ client, createRenderer }: Props) {
               const bearing = flowBearing(state.probe.eastward, state.probe.northward);
               return <Text size="xs">toward {bearing.degrees.toFixed(0)}° ({bearing.compass})</Text>;
             })()}
+            {time && <Text size="xs" c="dimmed">model time {formatUtc(time)}</Text>}
           </Paper>
         </div>
       )}
@@ -338,9 +446,13 @@ export function Viewer({ client, createRenderer }: Props) {
                 value={timeIndex}
                 onChange={(index) => dispatch({ type: "setTime", index })}
                 label={(index) => formatUtc(source.times[index])}
-                marks={source.times.map((_, index) => ({ value: index }))}
+                marks={source.times.length <= 40 ? source.times.map((_, index) => ({ value: index })) : undefined}
               />
-              <Text className="mono" size="sm" w={150}>{time ? formatUtc(time) : ""}</Text>
+              <Text className="mono" size="sm" w={200} ta="right">
+                {state.transition
+                  ? `${formatUtc(state.transition.from).slice(5, 16)} → ${formatUtc(state.transition.to).slice(5)}`
+                  : time ? formatUtc(time) : ""}
+              </Text>
               <div style={{ width: 16 }}>{state.frame.phase === "loading" && <Loader size="xs" />}</div>
             </Group>
           </Paper>
@@ -349,12 +461,18 @@ export function Viewer({ client, createRenderer }: Props) {
 
       {range && (
         <div className="overlay bottom-right">
-          <Paper className="glass" p="sm" w={300} shadow="lg" aria-label={`Colour scale for ${LAYERS[layer].title}`}>
-            <Text size="xs" c="dimmed" mb={6}>{LAYERS[layer].title} ({units})</Text>
-            <div className="colour-bar" style={{ background: cssGradient(LAYERS[layer].palette) }} />
+          <Paper className="glass" p="sm" w={300} shadow="lg" aria-label={`Colour scale for ${LAYER_TITLES[layer]}`}>
+            <Text size="xs" c="dimmed" mb={6}>
+              {LAYER_TITLES[layer]} ({units}) · {depthLabel}{display.scale === "log" ? " · log" : ""}
+            </Text>
+            <div className="colour-bar" style={{ background: cssGradient(display.palette) }} />
             <Group justify="space-between" mt={4} className="mono">
               <Text size="xs">{range.minimum.toFixed(1)}</Text>
-              <Text size="xs">{((range.minimum + range.maximum) / 2).toFixed(1)}</Text>
+              <Text size="xs">
+                {(display.scale === "log" && range.minimum > 0
+                  ? Math.sqrt(range.minimum * range.maximum)
+                  : (range.minimum + range.maximum) / 2).toFixed(1)}
+              </Text>
               <Text size="xs">{range.maximum.toFixed(1)}</Text>
             </Group>
             <Text size="xs" c="dimmed" mt={6}>{resolutionNote(shownFactor)}</Text>
@@ -367,9 +485,12 @@ export function Viewer({ client, createRenderer }: Props) {
   );
 }
 
+/** The renderer declined a layer (for example a log scale over values <= 0). */
+class RefusedLayer extends Error {}
+
 /** How the cells on screen relate to the model's own cells (S4's record). */
 function resolutionNote(factor: number): string {
   return factor <= 1
     ? "Model cells at source resolution"
-    : `Zoomed out: each cell is the mean of ${factor}×${factor} model cells; zoom in for source cells`;
+    : `Zoomed out: each cell is the area-weighted mean of ${factor}×${factor} model cells; zoom in for source cells`;
 }
