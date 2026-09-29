@@ -20,8 +20,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
 from processing import JobState, ProductJob
-from serving import wire, wire_observation
+from serving import wire, wire_observation, wire_slice, wire_vector
 from serving.observability import RequestContext
+from serving.slices import SliceFailed, SliceService, SliceWindow
 from serving.observations import (
     MarkerIntent, ObservationFailed, ObservationService, ProfileIntent,
 )
@@ -123,7 +124,8 @@ def create_app(coordinator: RequestCoordinator,
                catalogue: Catalogue | None = None,
                web_root: Path | None = None,
                observations: ObservationService | None = None,
-               readiness: Sequence[ReadinessCheck] = ()) -> FastAPI:
+               readiness: Sequence[ReadinessCheck] = (),
+               slices: SliceService | None = None) -> FastAPI:
     """The HTTP surface. ``web_root``, when given, serves the browser app
     from the same origin, so no cross-origin access is ever opened.
     ``readiness`` names the dependencies that must answer before traffic
@@ -291,6 +293,72 @@ def create_app(coordinator: RequestCoordinator,
                                  cycle: str,
                                  variables: list[str] = Query(...)) -> Response:
         return _binary(_profile(dataset_version_id, platform_id, cycle, variables))
+
+    def _sliced(prepare: Any) -> Any:
+        if slices is None:
+            raise HTTPException(status_code=503, detail={
+                "code": "slices_unavailable",
+                "message": "no slice service is configured"})
+        try:
+            return prepare(slices)
+        except RequestRejected as exc:
+            raise HTTPException(status_code=400, detail={
+                "code": exc.code, "message": exc.message}) from exc
+        except SliceFailed as exc:
+            failure = exc.failure
+            raise HTTPException(
+                status_code=_OBSERVATION_STATUS.get(failure.code, 500),
+                detail={"code": failure.code, "message": failure.message},
+            ) from exc
+
+    def _window(dataset_version_id: str, time: str, depth: float, west: float,
+                east: float, south: float, north: float) -> SliceWindow:
+        return SliceWindow(dataset_version_id, time, depth, west, east,
+                           south, north)
+
+    def _slice_binary(encode: Any, media_type: str, wire_format: str,
+                      product: Any) -> Response:
+        _, buffer = encode(product)
+        return Response(content=buffer, media_type=media_type,
+                        headers={"X-Wire-Format": wire_format})
+
+    # One horizontal level of a stored version; like observations, a pure
+    # function of the query string, so the data URL repeats it.
+    @app.get(f"{API}/depth-slices")
+    def depth_slice(request: Request, dataset_version_id: str, variable: str,
+                    time: str, depth: float, west: float, east: float,
+                    south: float, north: float) -> dict[str, Any]:
+        window = _window(dataset_version_id, time, depth, west, east, south, north)
+        product = _sliced(lambda service: service.scalar(window, variable))
+        return wire_slice.describe(
+            product, data_url=f"{API}/depth-slices/data?{request.url.query}")
+
+    @app.get(f"{API}/depth-slices/data")
+    def depth_slice_data(dataset_version_id: str, variable: str, time: str,
+                         depth: float, west: float, east: float, south: float,
+                         north: float) -> Response:
+        window = _window(dataset_version_id, time, depth, west, east, south, north)
+        product = _sliced(lambda service: service.scalar(window, variable))
+        return _slice_binary(wire_slice.encode, wire_slice.MEDIA_TYPE,
+                             wire_slice.WIRE_FORMAT, product)
+
+    @app.get(f"{API}/vector-slices")
+    def vector_slice(request: Request, dataset_version_id: str, eastward: str,
+                     northward: str, time: str, depth: float, west: float,
+                     east: float, south: float, north: float) -> dict[str, Any]:
+        window = _window(dataset_version_id, time, depth, west, east, south, north)
+        product = _sliced(lambda service: service.vector(window, eastward, northward))
+        return wire_vector.describe(
+            product, data_url=f"{API}/vector-slices/data?{request.url.query}")
+
+    @app.get(f"{API}/vector-slices/data")
+    def vector_slice_data(dataset_version_id: str, eastward: str,
+                          northward: str, time: str, depth: float, west: float,
+                          east: float, south: float, north: float) -> Response:
+        window = _window(dataset_version_id, time, depth, west, east, south, north)
+        product = _sliced(lambda service: service.vector(window, eastward, northward))
+        return _slice_binary(wire_vector.encode, wire_vector.MEDIA_TYPE,
+                             wire_vector.WIRE_FORMAT, product)
 
     if web_root is not None:
         app.mount("/", StaticFiles(directory=web_root, html=True), name="web")

@@ -30,6 +30,7 @@ from serving.observability import configure_logging
 
 if TYPE_CHECKING:
     from serving.observations import ObservationService
+    from serving.slices import SliceService
 
 #: The built browser app, served from the same origin when present.
 DEFAULT_WEB_ROOT = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -65,7 +66,8 @@ def _web_root() -> Path | None:
 def build_app(builder: ProductBuilder,
               catalogue: Catalogue | None = None,
               observations: ObservationService | None = None,
-              readiness: Sequence[ReadinessCheck] = ()) -> FastAPI:
+              readiness: Sequence[ReadinessCheck] = (),
+              slices: SliceService | None = None) -> FastAPI:
     executor = LocalExecutor(
         builder,
         maximum_points=_positive_int("SERVING_MAX_POINTS",
@@ -75,7 +77,7 @@ def build_app(builder: ProductBuilder,
         retained_jobs=_positive_int("SERVING_RETAINED_JOBS", 256),
     )
     return create_app(RequestCoordinator(executor), catalogue, _web_root(),
-                      observations, readiness)
+                      observations, readiness, slices)
 
 
 def create_default_app() -> FastAPI:
@@ -85,9 +87,11 @@ def create_default_app() -> FastAPI:
     )
     from processing.managed import (
         managed_observation_marker_builder, managed_observation_profile_builder,
-        managed_point_field_builder,
+        managed_depth_slice_builder, managed_point_field_builder,
+        managed_vector_slice_builder,
     )
     from serving.observations import ObservationService
+    from serving.slices import SliceService
 
     configure_logging(os.environ.get("LOG_LEVEL", "INFO"),
                       os.environ.get("LOG_FORMAT", "json"))
@@ -98,6 +102,10 @@ def create_default_app() -> FastAPI:
                 "SERVING_MAX_MARKERS", DEFAULT_MAXIMUM_MARKERS)),
         profiles=managed_observation_profile_builder(query),
     )
+    slices = SliceService(
+        scalar=managed_depth_slice_builder(query),
+        vector=managed_vector_slice_builder(query),
+        maximum_cells=_positive_int("SERVING_MAX_CELLS", DEFAULT_MAXIMUM_CELLS))
     return build_app(managed_point_field_builder(query), catalogue=query,
                      observations=observations,
-                     readiness=build_readiness_checks())
+                     readiness=build_readiness_checks(), slices=slices)

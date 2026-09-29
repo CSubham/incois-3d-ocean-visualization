@@ -48,6 +48,10 @@ from processing.observation import (
     build_observation_profile, build_observation_profile_from_record,
 )
 from processing.subsetter import subset_scalar_field
+from processing.vector_slice import (
+    VECTOR_SLICE_PRODUCT_TYPE, VECTOR_SLICE_SCHEMA_VERSION,
+    VectorSliceProduct, build_vector_slice,
+)
 
 __all__ = [
     "IDENTITY_TRANSFORM", "MISSING_VALUE_MASK", "PRODUCT_SCHEMA_VERSION",
@@ -73,6 +77,8 @@ __all__ = [
     "SLICE_PRODUCT_TYPE", "SLICE_SCHEMA_VERSION",
     "DepthInterpolationMetadata", "DepthSliceData", "DepthSliceDimensions",
     "DepthSliceProduct", "DepthSliceSelection", "build_depth_slice",
+    "VECTOR_SLICE_PRODUCT_TYPE", "VECTOR_SLICE_SCHEMA_VERSION",
+    "VectorSliceProduct", "build_vector_slice",
     "subset_scalar_field", "MARKER_PRODUCT_TYPE", "MARKER_SCHEMA_VERSION",
     "OBSERVATION_IDENTITY_TRANSFORM", "OBSERVATION_MISSING_MASK",
     "OBSERVATION_RECORD_MISSING_MASK", "OBSERVATION_RECORD_TRANSFORM",

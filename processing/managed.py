@@ -29,6 +29,7 @@ from processing.observation import (
     build_observation_profile_from_record,
 )
 from processing.point_field import prepare_sampled_scalar_point_field
+from processing.vector_slice import VectorSliceProduct, build_vector_slice
 
 
 def scalar_grid_descriptor(
@@ -131,6 +132,49 @@ def managed_depth_slice_builder(
     """Bind depth-slice execution to the configured S3 model-field read."""
     def build(request: ManagedDepthSliceRequest) -> DepthSliceProduct:
         return prepare_managed_depth_slice(query, request)
+
+    return build
+
+
+@dataclass(frozen=True)
+class ManagedVectorSliceRequest:
+    """Both components of one current vector, sliced the same way."""
+
+    dataset_version_id: str
+    eastward: DepthSliceSelection
+    northward: DepthSliceSelection
+    maximum_cells: int | None = None
+
+    def __post_init__(self) -> None:
+        if (self.eastward.time != self.northward.time
+                or self.eastward.area != self.northward.area
+                or self.eastward.depth != self.northward.depth
+                or self.eastward.interpolation != self.northward.interpolation):
+            raise InvalidRequestError(
+                "both vector components need the same time, area and depth")
+        if self.eastward.variable == self.northward.variable:
+            raise InvalidRequestError(
+                "the eastward and northward components must differ")
+
+
+def prepare_managed_vector_slice(
+        query: ModelFieldQuery,
+        request: ManagedVectorSliceRequest) -> VectorSliceProduct:
+    """Slice each component through the scalar path, then pair them."""
+    def component(selection: DepthSliceSelection) -> DepthSliceProduct:
+        return prepare_managed_depth_slice(query, ManagedDepthSliceRequest(
+            request.dataset_version_id, selection, request.maximum_cells))
+
+    return build_vector_slice(component(request.eastward),
+                              component(request.northward))
+
+
+def managed_vector_slice_builder(
+        query: ModelFieldQuery,
+        ) -> ProductBuilder[ManagedVectorSliceRequest, VectorSliceProduct]:
+    """Bind current-vector slices to the configured S3 model-field read."""
+    def build(request: ManagedVectorSliceRequest) -> VectorSliceProduct:
+        return prepare_managed_vector_slice(query, request)
 
     return build
 
@@ -311,6 +355,8 @@ __all__ = [
     "observation_record_descriptor",
     "ManagedObservationMarkerRequest", "ManagedObservationProfileRequest",
     "ManagedDepthSliceRequest", "managed_depth_slice_builder",
+    "ManagedVectorSliceRequest", "managed_vector_slice_builder",
+    "prepare_managed_vector_slice",
     "managed_observation_marker_builder",
     "managed_observation_profile_builder", "managed_point_field_builder",
     "prepare_managed_observation_markers",
