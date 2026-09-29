@@ -28,9 +28,27 @@ OBJECT_STORE_ROOT: Path = _path("INGESTION_OBJECT_STORE",
 
 #: The catalogue. PostgreSQL with PostGIS, so observation positions can be
 #: searched spatially rather than by opening every stored array.
-CATALOGUE_DSN: str = os.environ.get(
-    "INGESTION_CATALOGUE_DSN",
-    "postgresql://incois:incois@127.0.0.1:5433/incois")
+#: Never defaulted: without it the catalogue is refused rather than reached
+#: with credentials baked into code. `.env.example` has the local value.
+CATALOGUE_DSN: str | None = os.environ.get("INGESTION_CATALOGUE_DSN") or None
+
+
+def _seconds(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a whole number of seconds, not {raw!r}") from None
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1 second, not {value}")
+    return value
+
+
+#: How long a catalogue connection may take before the request fails,
+#: instead of hanging on an unreachable database.
+CATALOGUE_CONNECT_TIMEOUT: int = _seconds("INGESTION_CATALOGUE_CONNECT_TIMEOUT", 5)
 
 #: The S3 read implementation is chosen once by the composition root.
 S3_QUERY_BACKEND: str = os.environ.get(

@@ -7,9 +7,10 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from ingestion.config import (
-    CATALOGUE_DSN, OBJECT_STORE_ROOT, SOURCE_REFERENCES,
-    S3_QUERY_BACKEND,
+    CATALOGUE_CONNECT_TIMEOUT, CATALOGUE_DSN, OBJECT_STORE_ROOT,
+    SOURCE_REFERENCES, S3_QUERY_BACKEND,
 )
+from ingestion.domain.errors import ConfigurationError
 from ingestion.query import ScientificQuery
 from ingestion.query_memory import (
     InMemoryDatasetVersion, InMemoryModelFieldQuery,
@@ -29,13 +30,18 @@ def build_model_field_query(
     if backend == "memory":
         return InMemoryModelFieldQuery(memory_versions)
     if backend == "catalogue":
-        dsn = configured.get("INGESTION_CATALOGUE_DSN", CATALOGUE_DSN)
+        dsn = configured.get("INGESTION_CATALOGUE_DSN") or CATALOGUE_DSN
+        if not dsn:
+            raise ConfigurationError(
+                "INGESTION_CATALOGUE_DSN is not set; the catalogue query "
+                "backend cannot start without it")
         object_root = Path(configured.get(
             "INGESTION_OBJECT_STORE", str(OBJECT_STORE_ROOT)))
         return CatalogueModelFieldQuery(
             dsn,
             LocalObjectStore(object_root),
             SOURCE_REFERENCES,
+            connect_timeout=CATALOGUE_CONNECT_TIMEOUT,
         )
     raise ValueError(
         "S3_QUERY_BACKEND must be 'catalogue' or 'memory', "

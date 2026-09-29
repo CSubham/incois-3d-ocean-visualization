@@ -44,11 +44,17 @@ class StorageError(IngestionError):
 class PostgresStorage(StoragePort):
     """Object store for arrays, PostgreSQL and PostGIS for everything else."""
 
-    def __init__(self, dsn: str, objects: ObjectStore) -> None:
+    def __init__(self, dsn: str | None, objects: ObjectStore,
+                 connect_timeout: int = 5) -> None:
         self.dsn = dsn
         self.objects = objects
+        self.connect_timeout = connect_timeout
 
     def hand_off(self, package: CanonicalPackage) -> StorageReceipt:
+        # Refused before the array is written, so no object is orphaned.
+        if not self.dsn:
+            raise StorageError(
+                "INGESTION_CATALOGUE_DSN is not set; the import cannot be recorded")
         coordinate_values = _catalogue_coordinate_values(package)
         # The array is written first. A catalogue row pointing at nothing is
         # worse than an orphaned array, which is merely wasted space.
@@ -59,7 +65,8 @@ class PostgresStorage(StoragePort):
         extent = _extent_of(package)
 
         try:
-            with psycopg.connect(self.dsn) as connection:
+            with psycopg.connect(self.dsn, connect_timeout=self.connect_timeout
+                                 ) as connection:
                 with connection.cursor() as cursor:
                     self._record_version(
                         cursor, package, reference, extent, coordinate_values)

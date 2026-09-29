@@ -64,14 +64,14 @@ def _live_dsn() -> str:
     if parameters.get("host") not in {"127.0.0.1", "localhost", "::1"} \
             or parameters.get("port") != "5433":
         pytest.skip("live migration tests run only against the local PostGIS on 5433")
-    admin = make_conninfo(**{**parameters, "dbname": "postgres"})
+    admin = make_conninfo(base, dbname="postgres")
     try:
         with psycopg.connect(admin, autocommit=True, connect_timeout=3) as connection:
             connection.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(TEST_DATABASE)))
             connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(TEST_DATABASE)))
     except psycopg.OperationalError as exc:
         pytest.skip(f"local PostGIS is not reachable: {type(exc).__name__}")
-    return make_conninfo(**{**parameters, "dbname": TEST_DATABASE})
+    return make_conninfo(base, dbname=TEST_DATABASE)
 
 
 @pytest.mark.live

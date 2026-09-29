@@ -122,11 +122,13 @@ class CatalogueModelFieldQuery(ScientificQuery):
         source_references: Mapping[str, Any],
         *,
         connect: Callable[[str], Any] | None = None,
+        connect_timeout: int = 5,
     ) -> None:
         self._catalogue_dsn = catalogue_dsn
         self._objects = objects
         self._source_references = dict(source_references)
         self._connect = connect
+        self._connect_timeout = connect_timeout
 
     def list_model_versions(self) -> DatasetVersionListing:
         try:
@@ -379,7 +381,8 @@ class CatalogueModelFieldQuery(ScientificQuery):
     def _connection(self):
         if self._connect is not None:
             return self._connect(self._catalogue_dsn)
-        return psycopg.connect(self._catalogue_dsn, row_factory=dict_row)
+        return psycopg.connect(self._catalogue_dsn, row_factory=dict_row,
+                               connect_timeout=self._connect_timeout)
 
 
 def _require_grid(version: Mapping[str, Any]) -> None:

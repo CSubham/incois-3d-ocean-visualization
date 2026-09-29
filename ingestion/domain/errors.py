@@ -26,3 +26,7 @@ class ConventionError(IngestionError):
     Raised rather than guessed at: an ambiguous dataset is a reportable
     outcome, never something the stage resolves on the data's behalf.
     """
+
+
+class ConfigurationError(IngestionError):
+    """A required setting is missing or invalid; nothing was attempted."""
