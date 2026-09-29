@@ -119,7 +119,6 @@ def classify_geometry(dataset: xr.Dataset,
     lat_dims = dataset[latitude].dims
     lon_dims = dataset[longitude].dims
     vertical = coordinates.vertical
-    vert_dims = dataset[vertical].dims if vertical else ()
 
     # Gridded: latitude and longitude each span their own axis.
     if len(lat_dims) == 1 and len(lon_dims) == 1 and lat_dims != lon_dims:

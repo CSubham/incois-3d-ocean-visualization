@@ -84,10 +84,10 @@ def read_axis(axis: str, context: ssl.SSLContext) -> tuple[str, list[str]]:
 
 
 def nearest(values: list[float], target: float, prefer_inward: str) -> float:
-    if prefer_inward == "above":
-        tie_preference = lambda value: 0 if value >= target else 1
-    else:
-        tie_preference = lambda value: 0 if value <= target else 1
+    def tie_preference(value: float) -> int:
+        inward = value >= target if prefer_inward == "above" else value <= target
+        return 0 if inward else 1
+
     return min(values, key=lambda value: (abs(value - target), tie_preference(value)))
 
 

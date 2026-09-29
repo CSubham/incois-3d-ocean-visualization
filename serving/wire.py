@@ -21,7 +21,7 @@ import numpy as np
 
 from processing import ScalarPointFieldProduct
 from serving.wire_layout import (
-    MEDIA_TYPE, WireFormatError, decode_arrays, little_endian, pack_arrays,
+    MEDIA_TYPE, WireFormatError as WireFormatError, decode_arrays, little_endian, pack_arrays,
     unsigned_32,
 )
 

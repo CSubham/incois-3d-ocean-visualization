@@ -1,0 +1,8 @@
+# Only the backend source enters the build context.
+*
+!ingestion
+!processing
+!serving
+**/tests
+**/__pycache__
+**/*.pyc

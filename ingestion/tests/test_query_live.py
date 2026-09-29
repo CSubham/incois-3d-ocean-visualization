@@ -30,6 +30,7 @@ from processing.managed import prepare_managed_scalar_point_field
 LIVE_DSN, LIVE_SKIP_REASON = live_dsn_status()
 pytestmark = [
     pytest.mark.live,
+    pytest.mark.network,
     pytest.mark.skipif(
         LIVE_SKIP_REASON is not None,
         reason=LIVE_SKIP_REASON or "local PostGIS is unavailable",

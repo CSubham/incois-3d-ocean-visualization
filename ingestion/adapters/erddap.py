@@ -10,8 +10,6 @@ deployment is a configuration entry rather than a new module.
 
 from __future__ import annotations
 
-import csv
-import io
 import json
 import os
 import re

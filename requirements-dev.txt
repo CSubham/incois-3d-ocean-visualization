@@ -1,0 +1,4 @@
+# Development and CI tools, on top of the runtime dependencies.
+-r ingestion/requirements.txt
+mypy==2.3.1
+ruff==0.14.0

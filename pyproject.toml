@@ -1,0 +1,46 @@
+# Tool configuration only; the code is run from the repository root and is
+# not packaged. Runtime dependencies: ingestion/requirements.txt.
+# Development tools: requirements-dev.txt.
+
+[tool.pytest.ini_options]
+testpaths = ["ingestion", "processing", "serving"]
+markers = [
+    "live: requires explicitly configured local services (the test PostGIS)",
+    "network: reaches external data providers; not run in CI",
+]
+
+[tool.ruff]
+target-version = "py312"
+extend-exclude = ["archive", "graft", "web"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["ingestion", "processing", "serving"]
+exclude = ["^archive/"]
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["pandas", "pandas.*", "netCDF4", "cf_xarray"]
+ignore_missing_imports = true
+
+# Type-check debt recorded on 2026-09-29: these modules had errors before
+# CI existed. Every other module is gated. Remove a line when its module is
+# fixed; never add one.
+[[tool.mypy.overrides]]
+module = [
+    "ingestion.adapters",
+    "ingestion.adapters.erddap",
+    "ingestion.adapters.opendap",
+    "ingestion.canonical",
+    "ingestion.query_memory",
+    "ingestion.storage.postgres",
+    "ingestion.storage.query",
+    "ingestion.storage.sink",
+    "ingestion.tests.query_support",
+    "ingestion.tests.test_contracts",
+    "ingestion.tools.delimited",
+    "ingestion.web",
+    "processing.tests.fixtures",
+    "serving.wire_observation",
+]
+ignore_errors = true

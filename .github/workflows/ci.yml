@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    services:
+      # The same catalogue image as docker-compose.yml. Live tests create
+      # and drop their own disposable databases on it.
+      catalogue:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: incois
+          POSTGRES_PASSWORD: incois
+          POSTGRES_DB: incois
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U incois"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      INGESTION_CATALOGUE_DSN: postgresql://incois:incois@127.0.0.1:5433/incois_s3_query_live_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            ingestion/requirements.txt
+            requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check .
+      - name: Type-check
+        run: mypy
+      - name: Test (with the catalogue; without external providers)
+        run: pytest -m "not network" -q
+      - name: Migrations apply and report current
+        run: |
+          python -m ingestion.storage.migrate
+          python -m ingestion.storage.migrate --check
+
+  image:
+    runs-on: ubuntu-24.04
+    needs: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: incois-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: The image starts and answers liveness
+        run: |
+          docker run -d --name api -p 8000:8000 -e S3_QUERY_BACKEND=memory incois-backend:ci
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8000/health/live && exit 0
+            sleep 1
+          done
+          docker logs api
+          exit 1

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 

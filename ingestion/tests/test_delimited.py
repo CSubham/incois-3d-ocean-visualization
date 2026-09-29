@@ -1,6 +1,5 @@
 """Reading delimited observation text."""
 
-import numpy as np
 import pytest
 
 from ingestion.domain.errors import SourceError
