@@ -28,3 +28,4 @@ html, body, #root { height: 100%; margin: 0; }
 }
 .viewer .overlay.bottom-right { bottom: 100px; right: 16px; }
 .viewer .overlay.top-right { top: 16px; right: 16px; }
+.drawer-header { background: transparent !important; }

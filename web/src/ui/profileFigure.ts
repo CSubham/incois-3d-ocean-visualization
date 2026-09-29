@@ -3,6 +3,7 @@
 // down. Pure, so what the chart claims can be tested without a browser.
 
 import type { DecodedProfile, ProfileVariable } from "../api/observationWire";
+import { displayUnits } from "./surfaceFormat";
 
 export interface Figure {
   data: Record<string, unknown>[];
@@ -10,6 +11,23 @@ export interface Figure {
 }
 
 const AXIS_COLOUR = "#8ea3b7";
+
+/** Argo and CF variable names as people read them. */
+const NAMES: Record<string, string> = {
+  TEMP: "Temperature", PSAL: "Salinity", PRES: "Pressure", DOXY: "Oxygen", CHLA: "Chlorophyll",
+  sea_water_temperature: "Temperature", sea_water_salinity: "Salinity",
+};
+const COLOURS: Record<string, string> = { Temperature: "#f59f5a", Salinity: "#4fc3f7" };
+
+export function variableLabel(variable: ProfileVariable): string {
+  return NAMES[variable.name] ?? variable.name;
+}
+
+function axisTitle(variable: ProfileVariable): string {
+  const units = variable.units ? displayUnits(variable.units) : "";
+  return units && units !== "1e-3" && units !== "psu" ? `${variableLabel(variable)} (${units})`
+    : units ? `${variableLabel(variable)} (PSU)` : variableLabel(variable);
+}
 
 /** How a QC flag reads to a person: its declared meaning, or honestly none. */
 export function qcLabel(variable: ProfileVariable, level: number): string {
@@ -25,10 +43,12 @@ export function verticalTitle(profile: DecodedProfile): string {
   return profile.verticalUnits ? `${kind} (${profile.verticalUnits})` : kind;
 }
 
-export function profileFigure(profile: DecodedProfile): Figure {
+/** One panel per shown variable against the shared vertical axis. */
+export function profileFigure(profile: DecodedProfile, shown?: readonly string[]): Figure {
   const vertical = Array.from(profile.vertical, (v, i) => (profile.verticalMissing[i] ? null : v));
-  const count = profile.variables.length;
-  const data = profile.variables.map((variable, panel) => ({
+  const variables = profile.variables.filter((v) => !shown || shown.includes(v.name));
+  const count = variables.length;
+  const data = variables.map((variable, panel) => ({
     type: "scatter",
     mode: "lines+markers",
     name: variable.name,
@@ -39,14 +59,14 @@ export function profileFigure(profile: DecodedProfile): Figure {
     y: vertical,
     connectgaps: false,
     text: vertical.map((_, i) => qcLabel(variable, i)),
-    hovertemplate: `%{x} ${variable.units ?? ""}<br>${verticalTitle(profile)}: %{y}<br>%{text}<extra>${variable.name}</extra>`,
-    marker: { size: 5 },
-    line: { width: 1.5 },
+    hovertemplate: `%{x:.3f} · %{y:.0f} ${profile.verticalUnits ?? ""}<br>%{text}<extra></extra>`,
+    marker: { size: 4, color: COLOURS[variableLabel(variable)] ?? "#9fd3ea" },
+    line: { width: 2, color: COLOURS[variableLabel(variable)] ?? "#9fd3ea" },
   }));
   const layout: Record<string, unknown> = {
     grid: { rows: 1, columns: count, pattern: "independent" },
     showlegend: false,
-    margin: { l: 64, r: 16, t: 24, b: 48 },
+    margin: { l: 60, r: 12, t: 12, b: 44 },
     paper_bgcolor: "rgba(0,0,0,0)",
     plot_bgcolor: "rgba(0,0,0,0)",
     font: { color: "#dbe6f0", size: 12 },
@@ -56,9 +76,9 @@ export function profileFigure(profile: DecodedProfile): Figure {
       gridcolor: "#1d3247", color: AXIS_COLOUR, zeroline: false,
     },
   };
-  profile.variables.forEach((variable, panel) => {
+  variables.forEach((variable, panel) => {
     layout[panel === 0 ? "xaxis" : `xaxis${panel + 1}`] = {
-      title: { text: variable.units ? `${variable.name} (${variable.units})` : variable.name },
+      title: { text: axisTitle(variable), font: { color: COLOURS[variableLabel(variable)] ?? "#dbe6f0" } },
       gridcolor: "#1d3247", color: AXIS_COLOUR, zeroline: false,
     };
     if (panel > 0) layout[`yaxis${panel + 1}`] = { matches: "y", showticklabels: false };

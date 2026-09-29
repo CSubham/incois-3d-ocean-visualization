@@ -11,7 +11,7 @@
 // and the readout always reports a real frame.
 
 import {
-  ActionIcon, Alert, Badge, Button, Divider, Group, Loader, NumberInput, Paper,
+  Accordion, ActionIcon, Alert, Badge, Button, Group, Loader, NumberInput, Paper,
   SegmentedControl, Select, Slider, Stack, Switch, Text, Title,
 } from "@mantine/core";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
@@ -318,7 +318,7 @@ export function Viewer({ client, createRenderer }: Props) {
             <div>
               <Title order={1} size="h4">INCOIS Ocean Viewer</Title>
               <Text size="xs" c="dimmed">
-                {source ? `HYCOM ${source.dataset} · ${LAYER_TITLES[layer].toLowerCase()} · ${depthLabel}` : "Loading the catalogue…"}
+                {source ? `${LAYER_TITLES[layer]} · ${depthLabel[0].toUpperCase()}${depthLabel.slice(1)} · HYCOM model` : "Loading…"}
               </Text>
             </div>
             {state.sources.length > 1 && (
@@ -337,7 +337,11 @@ export function Viewer({ client, createRenderer }: Props) {
                 data={source.depths.map((d, index) => ({ value: String(index), label: d === 0 ? "Surface (0 m)" : `${Math.round(d)} m` }))}
               />
             )}
-            <Divider label="Display" labelPosition="left" />
+            <Accordion variant="contained" chevronPosition="right" styles={{ content: { padding: "8px 10px 12px" }, control: { padding: "4px 10px" } }}>
+              <Accordion.Item value="display">
+                <Accordion.Control><Text size="sm">Display</Text></Accordion.Control>
+                <Accordion.Panel>
+                  <Stack gap="xs">
             <Group grow gap="xs">
               <Select
                 label="Palette" size="xs" allowDeselect={false}
@@ -379,13 +383,14 @@ export function Viewer({ client, createRenderer }: Props) {
               />
             </div>
             <Switch
-              label="Smooth transitions between time steps"
-              description="A visual cross-fade between two real frames; values always come from a real frame."
-              size="xs"
+              label="Smooth playback" size="xs"
               checked={display.smooth}
               onChange={() => dispatch({ type: "setDisplay", patch: { smooth: !display.smooth } })}
             />
-            <Divider label="Observations" labelPosition="left" />
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+            </Accordion>
             <Group justify="space-between">
               <Switch
                 label="Argo floats"
@@ -397,7 +402,7 @@ export function Viewer({ client, createRenderer }: Props) {
               {state.floats.phase === "shown" && <Badge variant="light" color="yellow">{state.floats.count} floats</Badge>}
             </Group>
             {state.floats.phase === "shown" && (
-              <Text size="xs" c="dimmed">Select a float to see its temperature and salinity profile.</Text>
+              <Text size="xs" c="dimmed">Click a float to see its profile.</Text>
             )}
             {state.floats.phase === "failed" && <Text size="xs" c="red">{state.floats.failure?.message}</Text>}
           </Stack>
@@ -406,7 +411,7 @@ export function Viewer({ client, createRenderer }: Props) {
 
       {problem && (
         <div className="overlay top">
-          <Alert color="red" variant="filled" title="Not shown">{problem}</Alert>
+          <Alert color="red" variant="light" withCloseButton={false}>{problem}</Alert>
         </div>
       )}
 
@@ -421,7 +426,7 @@ export function Viewer({ client, createRenderer }: Props) {
               const bearing = flowBearing(state.probe.eastward, state.probe.northward);
               return <Text size="xs">toward {bearing.degrees.toFixed(0)}° ({bearing.compass})</Text>;
             })()}
-            {time && <Text size="xs" c="dimmed">model time {formatUtc(time)}</Text>}
+            {time && <Text size="xs" c="dimmed">{formatUtc(time)}</Text>}
           </Paper>
         </div>
       )}
@@ -463,7 +468,7 @@ export function Viewer({ client, createRenderer }: Props) {
         <div className="overlay bottom-right">
           <Paper className="glass" p="sm" w={300} shadow="lg" aria-label={`Colour scale for ${LAYER_TITLES[layer]}`}>
             <Text size="xs" c="dimmed" mb={6}>
-              {LAYER_TITLES[layer]} ({units}) · {depthLabel}{display.scale === "log" ? " · log" : ""}
+              {LAYER_TITLES[layer]} ({units}){display.scale === "log" ? " · log" : ""}
             </Text>
             <div className="colour-bar" style={{ background: cssGradient(display.palette) }} />
             <Group justify="space-between" mt={4} className="mono">
@@ -491,6 +496,6 @@ class RefusedLayer extends Error {}
 /** How the cells on screen relate to the model's own cells (S4's record). */
 function resolutionNote(factor: number): string {
   return factor <= 1
-    ? "Model cells at source resolution"
-    : `Zoomed out: each cell is the area-weighted mean of ${factor}×${factor} model cells; zoom in for source cells`;
+    ? "Full model resolution"
+    : `Averaged ${factor}×${factor} · zoom in for full detail`;
 }

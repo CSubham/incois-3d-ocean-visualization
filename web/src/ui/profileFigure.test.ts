@@ -27,7 +27,7 @@ describe("profileFigure", () => {
   it("draws one panel per variable sharing the vertical axis", () => {
     const { data, layout } = profileFigure(profile);
     expect(data.map((t) => [t.name, t.xaxis, t.yaxis])).toEqual([["TEMP", "x", "y"], ["PSAL", "x2", "y"]]);
-    expect(layout.xaxis2).toMatchObject({ title: { text: "PSAL (PSU)" } });
+    expect(layout.xaxis2).toMatchObject({ title: { text: "Salinity (PSU)" } });
   });
 
   it("leaves missing and non-finite values as gaps, never zeros", () => {
@@ -42,5 +42,10 @@ describe("profileFigure", () => {
     expect(qcLabel(temp, 1)).toBe("QC 4 (bad data)");
     expect(qcLabel(temp, 2)).toBe("QC missing");
     expect(qcLabel(psal, 0)).toBe("QC 1 (meaning not declared by the source)");
+  });
+
+  it("shows only the chosen variable when one is picked", () => {
+    const { data } = profileFigure(profile, ["PSAL"]);
+    expect(data.map((t) => t.name)).toEqual(["PSAL"]);
   });
 });
