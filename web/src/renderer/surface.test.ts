@@ -15,6 +15,11 @@ describe("surface grids", () => {
     expect(g.latitudeAscending).toBe(true);
   });
 
+  it("accepts a regular axis stored with rounding, as HYCOM stores longitude", () => {
+    const rounded = new Float64Array([30.0, 30.0799560546875, 30.1600341796875, 30.239990234375]);
+    expect(gridGeometry(rounded, lat).longitudeStep).toBeCloseTo(0.08, 4);
+  });
+
   it("refuses irregular spacing instead of stretching the image", () => {
     expect(() => gridGeometry(new Float64Array([0, 1, 3]), lat)).toThrow(SurfaceError);
   });

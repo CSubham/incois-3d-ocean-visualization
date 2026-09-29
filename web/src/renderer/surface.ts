@@ -32,21 +32,24 @@ export interface SurfaceStyle {
   scale: ScaleKind;
 }
 
-/** Relative spacing tolerance: float coordinates of a regular grid wobble. */
-const SPACING_TOLERANCE = 1e-3;
+/** How far any coordinate may sit from its place on the ideal regular grid,
+ *  as a fraction of one cell. Source axes are often stored rounded (HYCOM
+ *  longitudes to about 1e-4 degrees), so neighbouring steps differ slightly;
+ *  what matters for an image is where each cell lands, and 1% of a cell is
+ *  far below one pixel. */
+const POSITION_TOLERANCE = 0.01;
 
 function step(axis: NumericArray, name: string): number {
   if (axis.length < 2) throw new SurfaceError(`the ${name} axis needs at least two cells`);
-  const first = axis[1] - axis[0];
-  if (!Number.isFinite(first) || first === 0) throw new SurfaceError(`the ${name} axis is not increasing or decreasing`);
-  for (let i = 2; i < axis.length; i++) {
-    const d = axis[i] - axis[i - 1];
-    if (Math.abs(d - first) > Math.abs(first) * SPACING_TOLERANCE) {
+  const mean = (axis[axis.length - 1] - axis[0]) / (axis.length - 1);
+  if (!Number.isFinite(mean) || mean === 0) throw new SurfaceError(`the ${name} axis is not increasing or decreasing`);
+  for (let i = 0; i < axis.length; i++) {
+    const offset = Math.abs(axis[i] - (axis[0] + i * mean));
+    if (offset > Math.abs(mean) * POSITION_TOLERANCE) {
       throw new SurfaceError(`the ${name} spacing is irregular, so the field cannot be drawn as one image`);
     }
   }
-  // The mean step over the whole axis, not one rounded difference.
-  return (axis[axis.length - 1] - axis[0]) / (axis.length - 1);
+  return mean;
 }
 
 export function gridGeometry(longitude: NumericArray, latitude: NumericArray): GridGeometry {
