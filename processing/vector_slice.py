@@ -47,15 +47,41 @@ def build_vector_slice(eastward: DepthSliceProduct,
                        northward: DepthSliceProduct) -> VectorSliceProduct:
     """Pair two component slices; refuse any pair that is not cell-aligned."""
     east, north = eastward.data, northward.data
+    if (eastward.identity.dataset_id != northward.identity.dataset_id
+            or eastward.identity.dataset_version_id
+            != northward.identity.dataset_version_id):
+        raise GridValidationError(
+            "vector components come from different managed dataset versions")
+    if (eastward.identity.time_coordinate
+            != northward.identity.time_coordinate
+            or not np.array_equal(
+                np.asarray(eastward.identity.time_value),
+                np.asarray(northward.identity.time_value),
+            )):
+        raise GridValidationError("vector components identify different times")
+    if (eastward.coordinates != northward.coordinates
+            or eastward.spatial_reference != northward.spatial_reference):
+        raise GridValidationError(
+            "vector components declare different grid semantics")
+    if eastward.dimensions != northward.dimensions:
+        raise GridValidationError(
+            "vector components declare different grid dimensions")
     if not (np.array_equal(east.longitude, north.longitude)
             and np.array_equal(east.latitude, north.latitude)):
         raise GridValidationError(
             "vector components are not on the same horizontal grid")
+    if (east.latitude_source_indices != north.latitude_source_indices
+            or east.longitude_source_indices
+            != north.longitude_source_indices):
+        raise GridValidationError(
+            "vector components identify different horizontal source cells")
     if east.time_source_index != north.time_source_index:
         raise GridValidationError("vector components are at different times")
-    if (eastward.interpolation.source_depth_indices
-            != northward.interpolation.source_depth_indices):
+    if eastward.interpolation != northward.interpolation:
         raise GridValidationError("vector components are at different depths")
+    if eastward.reduction != northward.reduction:
+        raise GridValidationError(
+            "vector components have different horizontal reductions")
     if eastward.variable_units != northward.variable_units:
         raise GridValidationError(
             f"vector components have different units: "

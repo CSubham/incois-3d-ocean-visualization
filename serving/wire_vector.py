@@ -41,6 +41,12 @@ def _arrays(product: VectorSliceProduct) -> list[ArrayEntry]:
         ("depth_source_index", unsigned_32(
             "depth_source_index", east.interpolation.source_depth_indices),
          {"role": "source_depth_index"}),
+        ("latitude_source_index", unsigned_32(
+            "latitude_source_index", east.data.latitude_source_indices),
+         {"role": "source_latitude_index"}),
+        ("longitude_source_index", unsigned_32(
+            "longitude_source_index", east.data.longitude_source_indices),
+         {"role": "source_longitude_index"}),
     ]
 
 

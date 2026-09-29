@@ -157,8 +157,13 @@ class ManagedVectorSliceRequest:
     eastward: DepthSliceSelection
     northward: DepthSliceSelection
     maximum_cells: int | None = None
+    display_cells: int | None = None
+    display_side: int | None = None
 
     def __post_init__(self) -> None:
+        if (not isinstance(self.dataset_version_id, str)
+                or not self.dataset_version_id.strip()):
+            raise InvalidRequestError("a dataset_version_id is required")
         if (self.eastward.time != self.northward.time
                 or self.eastward.area != self.northward.area
                 or self.eastward.depth != self.northward.depth
@@ -168,6 +173,10 @@ class ManagedVectorSliceRequest:
         if self.eastward.variable == self.northward.variable:
             raise InvalidRequestError(
                 "the eastward and northward components must differ")
+        for name in ("maximum_cells", "display_cells", "display_side"):
+            value = getattr(self, name)
+            if value is not None and value < 1:
+                raise InvalidRequestError(f"{name} must be positive")
 
 
 def prepare_managed_vector_slice(
@@ -176,7 +185,12 @@ def prepare_managed_vector_slice(
     """Slice each component through the scalar path, then pair them."""
     def component(selection: DepthSliceSelection) -> DepthSliceProduct:
         return prepare_managed_depth_slice(query, ManagedDepthSliceRequest(
-            request.dataset_version_id, selection, request.maximum_cells))
+            request.dataset_version_id,
+            selection,
+            maximum_cells=request.maximum_cells,
+            display_cells=request.display_cells,
+            display_side=request.display_side,
+        ))
 
     return build_vector_slice(component(request.eastward),
                               component(request.northward))
