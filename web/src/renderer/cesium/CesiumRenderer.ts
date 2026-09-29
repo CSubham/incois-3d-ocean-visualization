@@ -14,10 +14,11 @@
 
 import {
   BillboardCollection, BoundingSphere, buildModuleUrl, Cartesian3, Cartographic,
-  Color, Ellipsoid, GridImageryProvider, HeadingPitchRange, ImageryLayer,
-  Math as CesiumMath, PointPrimitive, PointPrimitiveCollection, Rectangle,
-  ScreenSpaceEventHandler, ScreenSpaceEventType, SingleTileImageryProvider,
-  TileMapServiceImageryProvider, Viewer, type Cartesian2, type Entity,
+  Color, Ellipsoid, GeometryInstance, GridImageryProvider, HeadingPitchRange,
+  ImageryLayer, Material, MaterialAppearance, Math as CesiumMath, PointPrimitive,
+  PointPrimitiveCollection, Primitive, Rectangle, RectangleGeometry,
+  ScreenSpaceEventHandler, ScreenSpaceEventType, TileMapServiceImageryProvider,
+  Viewer, type Cartesian2, type Entity,
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 
@@ -38,12 +39,18 @@ const MARKER_PIXELS = 11;
 const MARKER_FILL = Color.fromCssColorString("#ffcf5a");
 const REGION_OUTLINE = Color.fromCssColorString("#9fd3ea").withAlpha(0.9);
 const SURFACE_ALPHA = 0.92;
+/** The surface sits just above the sea so it never z-fights the globe;
+ *  detail sits above the whole-field layer. Invisible at viewing distances. */
+const SURFACE_HEIGHT_M: Record<"base" | "detail", number> = { base: 1_500, detail: 3_000 };
 /** Arrows sit just above the sea surface so the globe never hides them. */
 const ARROW_HEIGHT_M = 2_000;
 const ARROW_PIXELS = 22;
 
 interface Surface {
-  layer: ImageryLayer;
+  primitive: Primitive;
+  material: Material;
+  /** Where the primitive lies; a field on the same rectangle swaps its image only. */
+  rectangleKey: string;
   geometry: GridGeometry;
   field: SurfaceField;
 }
@@ -289,35 +296,45 @@ export class CesiumRenderer implements Renderer {
     canvas.width = geometry.columns;
     canvas.height = geometry.rows;
     canvas.getContext("2d")!.putImageData(new ImageData(pixels, geometry.columns, geometry.rows), 0, 0);
-    const url = await new Promise<string>((resolve, reject) => canvas.toBlob(
-      (blob) => (blob ? resolve(URL.createObjectURL(blob)) : reject(new Error("the surface image could not be encoded"))),
-      "image/png"));
-    let provider: SingleTileImageryProvider;
-    try {
-      provider = await SingleTileImageryProvider.fromUrl(url, {
-        rectangle: Rectangle.fromDegrees(geometry.imageWest, geometry.south, geometry.imageEast, geometry.north),
-      });
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-    if (generation !== this.surfaceGeneration[slot] || this.viewer !== viewer) return { status: "superseded" };
 
-    // The new layer goes on top of the old one, which stays visible until the
-    // globe has built every tile of the new one; only then is it removed, so
-    // an animation step never shows an empty sea.
-    const layer = new ImageryLayer(provider, { alpha: SURFACE_ALPHA });
-    viewer.imageryLayers.add(layer);
-    // Detail always draws above the whole-field layer.
-    const detail = this.surfaces.detail;
-    if (slot === "base" && detail) viewer.imageryLayers.raiseToTop(detail.layer);
-    await tilesSettled(viewer);
-    if (generation !== this.surfaceGeneration[slot] || this.viewer !== viewer) {
-      if (this.viewer === viewer && !viewer.isDestroyed()) viewer.imageryLayers.remove(layer, true);
-      return { status: "superseded" };
+    const rectangleKey = [geometry.imageWest, geometry.south, geometry.imageEast, geometry.north].join(",");
+    const current = this.surfaces[slot];
+    if (current && current.rectangleKey === rectangleKey) {
+      // Same place, new values (an animation step): swap the image in place.
+      // The old texture is drawn until the new one is uploaded on the next
+      // frame, so there is never an empty or blank frame.
+      current.material.uniforms.image = canvas;
+      current.geometry = geometry;
+      current.field = field;
+    } else {
+      const material = Material.fromType("Image", {
+        image: canvas, color: new Color(1, 1, 1, SURFACE_ALPHA),
+      });
+      const primitive = new Primitive({
+        geometryInstances: new GeometryInstance({
+          geometry: new RectangleGeometry({
+            rectangle: Rectangle.fromDegrees(geometry.imageWest, geometry.south, geometry.imageEast, geometry.north),
+            height: SURFACE_HEIGHT_M[slot],
+            vertexFormat: MaterialAppearance.MaterialSupport.TEXTURED.vertexFormat,
+          }),
+        }),
+        appearance: new MaterialAppearance({
+          material, materialSupport: MaterialAppearance.MaterialSupport.TEXTURED,
+          translucent: true, flat: true,
+        }),
+        asynchronous: false,
+      });
+      viewer.scene.primitives.add(primitive);
+      // The previous surface stays until the new one has been drawn once.
+      await renderedOnce(viewer, primitive);
+      if (generation !== this.surfaceGeneration[slot] || this.viewer !== viewer) {
+        if (this.viewer === viewer && !viewer.isDestroyed()) viewer.scene.primitives.remove(primitive);
+        return { status: "superseded" };
+      }
+      const previous = this.surfaces[slot];
+      this.surfaces[slot] = { primitive, material, rectangleKey, geometry, field };
+      if (previous) viewer.scene.primitives.remove(previous.primitive);   // releases GPU resources
     }
-    const previous = this.surfaces[slot];
-    this.surfaces[slot] = { layer, geometry, field };
-    if (previous) viewer.imageryLayers.remove(previous.layer, true);
     this.probedCell = null;
     viewer.scene.requestRender();
     let hidden = 0;
@@ -332,7 +349,7 @@ export class CesiumRenderer implements Renderer {
       this.surfaceGeneration[which]++;   // an image still loading is dropped
       const surface = this.surfaces[which];
       if (!surface || !this.viewer) continue;
-      this.viewer.imageryLayers.remove(surface.layer, true);
+      this.viewer.scene.primitives.remove(surface.primitive);   // releases GPU resources
       delete this.surfaces[which];
     }
     this.setProbe(null);
@@ -553,28 +570,24 @@ function extent(longitude: NumericArray, latitude: NumericArray) {
   return { west, east, south, north };
 }
 
-/** Longest wait for new tiles before swapping anyway, so a stalled tile
- *  cannot freeze an animation. */
-const TILE_WAIT_MS = 4_000;
+/** Longest wait for a new surface to draw before swapping anyway. */
+const DRAW_WAIT_MS = 2_000;
 
-/** Resolves once the globe reports every visible tile loaded. */
-function tilesSettled(viewer: Viewer): Promise<void> {
+/** Resolves after a frame in which the primitive was ready and drawn. */
+function renderedOnce(viewer: Viewer, primitive: Primitive): Promise<void> {
   return new Promise((resolve) => {
     const { scene } = viewer;
     const started = performance.now();
-    let seenLoading = false;
+    let drawnReady = false;
     const check = () => {
-      // Adding a layer does not mark tiles dirty until the next frame, so a
-      // settled globe is trusted only after that frame has rendered.
-      if (!scene.globe.tilesLoaded) seenLoading = true;
-      const done = (scene.globe.tilesLoaded && (seenLoading || performance.now() - started > 250))
-        || performance.now() - started > TILE_WAIT_MS;
-      if (done) {
+      if (drawnReady || performance.now() - started > DRAW_WAIT_MS) {
         remove();
         resolve();
-      } else {
-        scene.requestRender();
+        return;
       }
+      // Ready now means drawn in the next frame; resolve after that one.
+      if (primitive.ready) drawnReady = true;
+      scene.requestRender();
     };
     const remove = scene.postRender.addEventListener(check);
     scene.requestRender();
