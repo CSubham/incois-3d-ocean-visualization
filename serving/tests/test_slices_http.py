@@ -56,11 +56,14 @@ def _query_with_currents() -> InMemoryModelFieldQuery:
         version, summary=summary, dataset=dataset, descriptors=descriptors)])
 
 
-def _client(query=None, slices=True) -> TestClient:
+def _client(query=None, slices=True,
+            maximum_display_cells=2_000_000) -> TestClient:
     query = query or _query_with_currents()
     service = SliceService(scalar=managed_depth_slice_builder(query),
                            vector=managed_vector_slice_builder(query),
-                           maximum_cells=1000) if slices else None
+                           maximum_cells=1000,
+                           maximum_display_cells=maximum_display_cells,
+                           ) if slices else None
     executor = LocalExecutor(fixtures.builder(), maximum_points=100,
                              maximum_cells=1000)
     return TestClient(create_app(RequestCoordinator(executor), slices=service))
@@ -98,6 +101,15 @@ def test_a_current_slice_carries_both_components_and_their_speed():
     assert np.isnan(arrays["speed"].reshape(2, 4)[1, 3])
     speed = arrays["speed"][arrays["missing_value_mask"] == 0]
     assert np.allclose(speed, 5.0)
+
+
+def test_a_current_slice_uses_the_servers_scalar_view_budget():
+    body = _client(maximum_display_cells=2).get(
+        "/api/v1/vector-slices", params=VECTOR).json()
+
+    assert body["grid_shape"] == [1, 2]
+    assert body["product"]["eastward"]["reduction"]["factor"] == 2
+    assert body["product"]["northward"]["reduction"]["factor"] == 2
 
 
 def test_components_in_different_units_are_refused():

@@ -103,7 +103,9 @@ class SliceService:
             window.dataset_version_id,
             eastward=self._selection(window, eastward),
             northward=self._selection(window, northward),
-            maximum_cells=self._maximum_cells))
+            maximum_cells=self._maximum_cells,
+            display_cells=self._maximum_display_cells,
+            display_side=self._display_side))
         return self._run(self._vector, request)
 
     @staticmethod
