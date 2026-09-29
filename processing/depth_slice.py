@@ -128,6 +128,24 @@ class DepthSliceData:
 
 
 @dataclass(frozen=True)
+class SliceReduction:
+    """How a slice was fitted to a view's cell budget (see slice_reduction)."""
+
+    method: str
+    #: Source cells per delivered cell along latitude and longitude.
+    factor: int
+    maximum_cells: int | None
+    source_shape: tuple[int, int]
+    delivered_shape: tuple[int, int]
+    #: What each delivered source index names.
+    source_index_meaning: str = "first source cell of the block"
+
+    @property
+    def is_lossy(self) -> bool:
+        return self.factor > 1
+
+
+@dataclass(frozen=True)
 class DepthSliceProduct:
     identity: ProductIdentity
     coordinates: CoordinateMetadata
@@ -142,6 +160,8 @@ class DepthSliceProduct:
     data: DepthSliceData
     coordinate_transform: CoordinateTransform = IDENTITY_TRANSFORM
     mask_semantics: MaskSemantics = MISSING_VALUE_MASK
+    #: None: delivered at source resolution, never fitted to a budget.
+    reduction: SliceReduction | None = None
     schema_version: str = field(default=SLICE_SCHEMA_VERSION, init=False)
     product_type: str = field(default=SLICE_PRODUCT_TYPE, init=False)
 

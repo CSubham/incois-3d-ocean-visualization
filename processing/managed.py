@@ -29,6 +29,7 @@ from processing.observation import (
     build_observation_profile_from_record,
 )
 from processing.point_field import prepare_sampled_scalar_point_field
+from processing.slice_reduction import reduce_depth_slice
 from processing.vector_slice import VectorSliceProduct, build_vector_slice
 
 
@@ -96,14 +97,22 @@ def managed_point_field_builder(query: ModelFieldQuery) -> ProductBuilder:
 class ManagedDepthSliceRequest:
     dataset_version_id: str
     selection: DepthSliceSelection
+    #: Work ceiling: source cells this server reads for one slice.
     maximum_cells: int | None = None
+    #: View budget: cells delivered; a larger slice is reduced by a recorded
+    #: block mean (processing.slice_reduction). None delivers source cells.
+    display_cells: int | None = None
+    #: Longest delivered side, e.g. the renderer's texture limit.
+    display_side: int | None = None
 
     def __post_init__(self) -> None:
         if (not isinstance(self.dataset_version_id, str)
                 or not self.dataset_version_id.strip()):
             raise InvalidRequestError("a dataset_version_id is required")
-        if self.maximum_cells is not None and self.maximum_cells < 1:
-            raise InvalidRequestError("maximum_cells must be positive")
+        for name in ("maximum_cells", "display_cells", "display_side"):
+            value = getattr(self, name)
+            if value is not None and value < 1:
+                raise InvalidRequestError(f"{name} must be positive")
 
 
 def prepare_managed_depth_slice(
@@ -114,12 +123,16 @@ def prepare_managed_depth_slice(
         with query.open_model_field(
                 request.dataset_version_id,
                 request.selection.variable) as managed:
-            return build_depth_slice(
+            product = build_depth_slice(
                 managed.dataset,
                 scalar_grid_descriptor(managed.descriptor),
                 request.selection,
                 maximum_cells=request.maximum_cells,
             )
+        if request.display_cells is None:
+            return product
+        return reduce_depth_slice(product, request.display_cells,
+                                  request.display_side)
     except VariableUnavailable as exc:
         raise VariableSelectionError(str(exc)) from exc
     except ModelFieldQueryError as exc:

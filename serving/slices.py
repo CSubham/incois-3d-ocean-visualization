@@ -51,15 +51,30 @@ class SliceService:
         scalar: ProductBuilder[ManagedDepthSliceRequest, DepthSliceProduct],
         vector: ProductBuilder[ManagedVectorSliceRequest, VectorSliceProduct],
         maximum_cells: int,
+        maximum_display_cells: int = 2_000_000,
+        display_side: int = 4096,
     ) -> None:
         self._scalar = scalar
         self._vector = vector
+        #: Source cells read for one slice: protects the server.
         self._maximum_cells = maximum_cells
+        #: Cells delivered for one view: a caller may ask for fewer, never more.
+        self._maximum_display_cells = maximum_display_cells
+        #: Longest delivered side, within every WebGL2 texture limit.
+        self._display_side = display_side
 
-    def scalar(self, window: SliceWindow, variable: str) -> DepthSliceProduct:
+    def scalar(self, window: SliceWindow, variable: str,
+               display_cells: int | None = None) -> DepthSliceProduct:
+        """One level fitted to the view: ``display_cells`` is the caller's
+        budget, capped by this server's; a larger slice is block-averaged."""
+        if display_cells is not None and display_cells < 1:
+            raise RequestRejected("invalid_request", "maximum_cells must be positive")
+        budget = min(display_cells or self._maximum_display_cells,
+                     self._maximum_display_cells)
         request = self._request(lambda: ManagedDepthSliceRequest(
             window.dataset_version_id, self._selection(window, variable),
-            self._maximum_cells))
+            maximum_cells=self._maximum_cells, display_cells=budget,
+            display_side=self._display_side))
         return self._run(self._scalar, request)
 
     def vector(self, window: SliceWindow, eastward: str,

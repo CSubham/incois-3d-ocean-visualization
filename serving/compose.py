@@ -41,6 +41,11 @@ DEFAULT_MAXIMUM_POINTS = 500_000
 DEFAULT_MAXIMUM_CELLS = 5_000_000
 #: Markers per request. Each marker's product reads its full profile record.
 DEFAULT_MAXIMUM_MARKERS = 2_000
+#: Source cells one slice may read: a whole 1/12-degree global level is
+#: about 19 million. Delivered cells are bounded separately, per view.
+DEFAULT_MAXIMUM_SLICE_SOURCE_CELLS = 25_000_000
+#: Cells delivered for one view; a larger slice is block-averaged in S4.
+DEFAULT_MAXIMUM_SLICE_CELLS = 2_000_000
 
 
 def _positive_int(name: str, default: int) -> int:
@@ -105,7 +110,10 @@ def create_default_app() -> FastAPI:
     slices = SliceService(
         scalar=managed_depth_slice_builder(query),
         vector=managed_vector_slice_builder(query),
-        maximum_cells=_positive_int("SERVING_MAX_CELLS", DEFAULT_MAXIMUM_CELLS))
+        maximum_cells=_positive_int("SERVING_MAX_SLICE_SOURCE_CELLS",
+                                    DEFAULT_MAXIMUM_SLICE_SOURCE_CELLS),
+        maximum_display_cells=_positive_int("SERVING_MAX_SLICE_CELLS",
+                                            DEFAULT_MAXIMUM_SLICE_CELLS))
     return build_app(managed_point_field_builder(query), catalogue=query,
                      observations=observations,
                      readiness=build_readiness_checks(), slices=slices)

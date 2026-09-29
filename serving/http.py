@@ -327,18 +327,19 @@ def create_app(coordinator: RequestCoordinator,
     @app.get(f"{API}/depth-slices")
     def depth_slice(request: Request, dataset_version_id: str, variable: str,
                     time: str, depth: float, west: float, east: float,
-                    south: float, north: float) -> dict[str, Any]:
+                    south: float, north: float,
+                    maximum_cells: int | None = None) -> dict[str, Any]:
         window = _window(dataset_version_id, time, depth, west, east, south, north)
-        product = _sliced(lambda service: service.scalar(window, variable))
+        product = _sliced(lambda service: service.scalar(window, variable, maximum_cells))
         return wire_slice.describe(
             product, data_url=f"{API}/depth-slices/data?{request.url.query}")
 
     @app.get(f"{API}/depth-slices/data")
     def depth_slice_data(dataset_version_id: str, variable: str, time: str,
                          depth: float, west: float, east: float, south: float,
-                         north: float) -> Response:
+                         north: float, maximum_cells: int | None = None) -> Response:
         window = _window(dataset_version_id, time, depth, west, east, south, north)
-        product = _sliced(lambda service: service.scalar(window, variable))
+        product = _sliced(lambda service: service.scalar(window, variable, maximum_cells))
         return _slice_binary(wire_slice.encode, wire_slice.MEDIA_TYPE,
                              wire_slice.WIRE_FORMAT, product)
 

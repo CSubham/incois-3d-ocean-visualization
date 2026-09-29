@@ -129,3 +129,23 @@ def test_without_a_slice_service_the_routes_say_so():
         "/api/v1/depth-slices", params={**WINDOW, "variable": "water_temp"})
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "slices_unavailable"
+
+
+def test_a_slice_is_fitted_to_the_callers_cell_budget_and_records_how():
+    client = _client()
+    body = client.get("/api/v1/depth-slices",
+                      params={**WINDOW, "variable": "water_temp", "maximum_cells": 2}).json()
+    assert body["grid_shape"] == [1, 2]
+    reduction = body["product"]["reduction"]
+    assert reduction["method"] == "mask_aware_block_mean"
+    assert reduction["factor"] == 2 and reduction["source_shape"] == [2, 4]
+
+    unbudgeted = client.get("/api/v1/depth-slices",
+                            params={**WINDOW, "variable": "water_temp"}).json()
+    assert unbudgeted["product"]["reduction"]["factor"] == 1
+
+
+def test_a_non_positive_cell_budget_is_refused():
+    response = _client().get("/api/v1/depth-slices",
+                             params={**WINDOW, "variable": "water_temp", "maximum_cells": 0})
+    assert response.status_code == 400
