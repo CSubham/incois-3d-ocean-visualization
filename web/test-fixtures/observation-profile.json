@@ -1,0 +1,280 @@
+{
+  "data": {
+    "arrays": [
+      {
+        "byte_length": 16,
+        "byte_offset": 0,
+        "count": 2,
+        "dtype": "<f8",
+        "name": "vertical",
+        "role": "vertical"
+      },
+      {
+        "byte_length": 2,
+        "byte_offset": 16,
+        "count": 2,
+        "dtype": "|u1",
+        "for": "vertical",
+        "name": "vertical_missing_value_mask",
+        "role": "missing_value_mask"
+      },
+      {
+        "byte_length": 2,
+        "byte_offset": 24,
+        "count": 2,
+        "dtype": "|u1",
+        "for": "timestamp",
+        "name": "timestamp_missing_value_mask",
+        "role": "missing_value_mask"
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 32,
+        "count": 2,
+        "dtype": "<u4",
+        "name": "source_index",
+        "role": "source_observation_index"
+      },
+      {
+        "byte_length": 12,
+        "byte_offset": 40,
+        "component": "offsets",
+        "count": 3,
+        "dtype": "<u4",
+        "encoding": "utf-8-offsets",
+        "name": "timestamp_offsets",
+        "role": "timestamp",
+        "source_dtype": null,
+        "text_column": "timestamp",
+        "value_count": 2
+      },
+      {
+        "byte_length": 58,
+        "byte_offset": 56,
+        "component": "utf8",
+        "count": 58,
+        "dtype": "|u1",
+        "encoding": "utf-8-offsets",
+        "name": "timestamp_utf8",
+        "role": "timestamp",
+        "source_dtype": null,
+        "text_column": "timestamp",
+        "value_count": 2
+      },
+      {
+        "byte_length": 16,
+        "byte_offset": 120,
+        "count": 2,
+        "dtype": "<f8",
+        "name": "variable_0_values",
+        "role": "measurement",
+        "variable": "TEMP"
+      },
+      {
+        "byte_length": 2,
+        "byte_offset": 136,
+        "count": 2,
+        "dtype": "|u1",
+        "name": "variable_0_missing_value_mask",
+        "role": "missing_value_mask",
+        "variable": "TEMP"
+      },
+      {
+        "byte_length": 12,
+        "byte_offset": 144,
+        "component": "offsets",
+        "count": 3,
+        "dtype": "<u4",
+        "encoding": "utf-8-offsets",
+        "name": "variable_0_qc_offsets",
+        "qc_variable": "TEMP_QC",
+        "role": "quality_flag",
+        "source_dtype": null,
+        "text_column": "variable_0_qc",
+        "value_count": 2,
+        "variable": "TEMP"
+      },
+      {
+        "byte_length": 2,
+        "byte_offset": 160,
+        "component": "utf8",
+        "count": 2,
+        "dtype": "|u1",
+        "encoding": "utf-8-offsets",
+        "name": "variable_0_qc_utf8",
+        "qc_variable": "TEMP_QC",
+        "role": "quality_flag",
+        "source_dtype": null,
+        "text_column": "variable_0_qc",
+        "value_count": 2,
+        "variable": "TEMP"
+      },
+      {
+        "byte_length": 2,
+        "byte_offset": 168,
+        "count": 2,
+        "dtype": "|u1",
+        "for": "quality_flag",
+        "name": "variable_0_qc_missing_value_mask",
+        "role": "missing_value_mask",
+        "variable": "TEMP"
+      },
+      {
+        "byte_length": 16,
+        "byte_offset": 176,
+        "count": 2,
+        "dtype": "<f8",
+        "name": "variable_1_values",
+        "role": "measurement",
+        "variable": "PSAL"
+      },
+      {
+        "byte_length": 2,
+        "byte_offset": 192,
+        "count": 2,
+        "dtype": "|u1",
+        "name": "variable_1_missing_value_mask",
+        "role": "missing_value_mask",
+        "variable": "PSAL"
+      },
+      {
+        "byte_length": 12,
+        "byte_offset": 200,
+        "component": "offsets",
+        "count": 3,
+        "dtype": "<u4",
+        "encoding": "utf-8-offsets",
+        "name": "variable_1_qc_offsets",
+        "qc_variable": "PSAL_QC",
+        "role": "quality_flag",
+        "source_dtype": null,
+        "text_column": "variable_1_qc",
+        "value_count": 2,
+        "variable": "PSAL"
+      },
+      {
+        "byte_length": 2,
+        "byte_offset": 216,
+        "component": "utf8",
+        "count": 2,
+        "dtype": "|u1",
+        "encoding": "utf-8-offsets",
+        "name": "variable_1_qc_utf8",
+        "qc_variable": "PSAL_QC",
+        "role": "quality_flag",
+        "source_dtype": null,
+        "text_column": "variable_1_qc",
+        "value_count": 2,
+        "variable": "PSAL"
+      },
+      {
+        "byte_length": 2,
+        "byte_offset": 224,
+        "count": 2,
+        "dtype": "|u1",
+        "for": "quality_flag",
+        "name": "variable_1_qc_missing_value_mask",
+        "role": "missing_value_mask",
+        "variable": "PSAL"
+      }
+    ],
+    "byte_length": 226,
+    "byte_order": "little",
+    "media_type": "application/octet-stream",
+    "url": "/data"
+  },
+  "observation_count": 2,
+  "product": {
+    "coordinate_transform": {
+      "horizontal": "longitude, latitude and marker time supplied by the S3 ProfileMarker contract; S4 does not average, reproject or re-wrap them",
+      "kind": "s3-observation-record",
+      "vertical": "source-order vertical values supplied by the S3 ObservationProfile contract; S4 does not convert, sort or interpolate them"
+    },
+    "coordinates": {
+      "dtypes": {
+        "cycle": null,
+        "latitude": null,
+        "longitude": null,
+        "platform": null,
+        "time": null,
+        "vertical": null
+      },
+      "names": {
+        "cycle": "cycle",
+        "latitude": "latitude",
+        "longitude": "longitude",
+        "platform": "platform_id",
+        "time": "time",
+        "vertical": "PRES"
+      },
+      "sample_dimension": "observation_record",
+      "time_encoding": {
+        "calendar": null,
+        "units": null
+      },
+      "units": {
+        "cycle": null,
+        "latitude": "degrees_north",
+        "longitude": "degrees_east",
+        "platform": null,
+        "time": null,
+        "vertical": "decibar"
+      },
+      "vertical_kind": "pressure"
+    },
+    "dataset_identity": {
+      "dataset_id": "Indian_ARGO_Floats",
+      "dataset_version_id": "profile-version-1"
+    },
+    "mask_semantics": {
+      "masked_values": "not scientific values; consumers must apply the mask",
+      "sources": [
+        "None in an S3 profile record",
+        "NaN in a numeric record value"
+      ],
+      "true_means": "the S3 observation record has no scientific value"
+    },
+    "product_type": "observation_profile",
+    "profile_identity": {
+      "cycle": "12",
+      "platform_id": "7902250"
+    },
+    "provenance": {
+      "import_id": "profile-version-1",
+      "source": {
+        "id": "incois_erddap"
+      }
+    },
+    "schema_version": "s4.observation-profile/1.0",
+    "spatial_reference": {
+      "crs": "EPSG:4326",
+      "vertical_positive": "down"
+    },
+    "variables": [
+      {
+        "name": "TEMP",
+        "qc_conventions": "fixture QC table 1",
+        "qc_flag_meanings": "good_data bad_data",
+        "qc_flag_values": [
+          1,
+          2
+        ],
+        "qc_source_dtype": null,
+        "qc_variable": "TEMP_QC",
+        "source_dtype": null,
+        "units": "degree_Celsius"
+      },
+      {
+        "name": "PSAL",
+        "qc_conventions": null,
+        "qc_flag_meanings": null,
+        "qc_flag_values": null,
+        "qc_source_dtype": null,
+        "qc_variable": "PSAL_QC",
+        "source_dtype": null,
+        "units": "1e-3"
+      }
+    ]
+  },
+  "wire_format": "s5.observation-wire/1.0"
+}

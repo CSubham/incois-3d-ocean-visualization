@@ -239,3 +239,31 @@ def test_the_browser_float32_marker_fixture_matches_the_encoder():
 
     assert (golden / "observation-markers-f4.json").read_text() == descriptor
     assert (golden / "observation-markers-f4.bin").read_bytes() == buffer
+
+
+def test_the_browser_profile_fixture_matches_the_encoder():
+    """The browser profile decoder is tested against these files."""
+    import json
+    import os
+    from pathlib import Path
+
+    from ingestion.query import ProfileIdentity
+    from ingestion.tests.query_support import PROFILE_VERSION_ID, in_memory_case
+    from processing.managed import (
+        ManagedObservationProfileRequest, managed_observation_profile_builder,
+    )
+
+    golden = Path(__file__).resolve().parents[2] / "web" / "test-fixtures"
+    product = managed_observation_profile_builder(in_memory_case().query)(
+        ManagedObservationProfileRequest(
+            identity=ProfileIdentity(PROFILE_VERSION_ID, "7902250", "12"),
+            variables=("TEMP", "PSAL")))
+    descriptor = json.dumps(wire_observation.describe(product, data_url="/data"),
+                            indent=2, sort_keys=True) + "\n"
+    _, buffer = wire_observation.encode(product)
+    if os.environ.get("WIRE_GOLDEN_UPDATE") == "1":
+        (golden / "observation-profile.json").write_text(descriptor)
+        (golden / "observation-profile.bin").write_bytes(buffer)
+
+    assert (golden / "observation-profile.json").read_text() == descriptor
+    assert (golden / "observation-profile.bin").read_bytes() == buffer

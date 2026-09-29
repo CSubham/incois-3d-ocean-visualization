@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { decodeMarkers, type MarkerDescriptor } from "./observationWire";
+import { decodeMarkers, decodeProfile, type MarkerDescriptor, type ProfileDescriptor } from "./observationWire";
 import { WireError } from "./wire";
 
 // Written by serving/tests/test_wire_observation.py from the Python encoder.
@@ -54,5 +54,34 @@ describe("decodeMarkers", () => {
   it("refuses a truncated buffer or an unknown format", () => {
     expect(() => decodeMarkers(descriptor, buffer.slice(8))).toThrow(WireError);
     expect(() => decodeMarkers({ ...descriptor, wire_format: "other/1" }, buffer)).toThrow(WireError);
+  });
+});
+
+describe("decodeProfile", () => {
+  const profileDescriptor = JSON.parse(readFileSync(new URL("observation-profile.json", fixture), "utf8")) as ProfileDescriptor;
+  const raw = readFileSync(new URL("observation-profile.bin", fixture));
+  const profileBuffer = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer;
+
+  it("reads one exact profile with its pressure axis", () => {
+    const profile = decodeProfile(profileDescriptor, profileBuffer);
+    expect([profile.platformId, profile.cycle]).toEqual(["7902250", "12"]);
+    expect(profile.verticalKind).toBe("pressure");
+    expect(profile.verticalUnits).toBe("decibar");
+    expect(Array.from(profile.vertical)).toEqual([2, 10]);
+    expect(profile.timestamps.every((t) => t?.startsWith("2026-09-28"))).toBe(true);
+    expect(profile.variables.map((v) => [v.name, v.units])).toEqual([["TEMP", "degree_Celsius"], ["PSAL", "1e-3"]]);
+  });
+
+  it("carries QC flags with their declared meanings, and none where none are declared", () => {
+    const [temp, psal] = decodeProfile(profileDescriptor, profileBuffer).variables;
+    expect(temp.qcFlags).toHaveLength(2);
+    expect(temp.qcMeanings?.get("1")).toBe("good data");
+    expect(temp.qcMeanings?.get("2")).toBe("bad data");
+    expect(psal.qcFlags).toHaveLength(2);
+    expect(psal.qcMeanings).toBeNull();
+  });
+
+  it("refuses a truncated buffer", () => {
+    expect(() => decodeProfile(profileDescriptor, profileBuffer.slice(8))).toThrow(WireError);
   });
 });
