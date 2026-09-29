@@ -10,6 +10,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from ingestion.query import (
+    DatasetVersionListing, ObservationVersionListing, UnavailableDatasetVersion,
+)
 from processing import (
     ExecutorCapabilities, JobState, LocalExecutor, ProductExecutor,
     ProductJob, UnknownRequestError,
@@ -218,13 +221,21 @@ class _Version:
 
 
 class _Catalogue:
-    def __init__(self, versions=(), fail=False):
+    def __init__(self, versions=(), fail=False, observations_fail=False):
         self.versions, self.fail = versions, fail
+        self.observations_fail = observations_fail
 
     def list_model_versions(self):
         if self.fail:
             raise RuntimeError("postgresql://secret@db/incois is down")
-        return self.versions
+        if isinstance(self.versions, DatasetVersionListing):
+            return self.versions
+        return DatasetVersionListing(versions=tuple(self.versions), unavailable=())
+
+    def list_observation_versions(self):
+        if self.observations_fail:
+            raise RuntimeError("postgresql://secret@db/incois is down")
+        return ObservationVersionListing(versions=(), unavailable=())
 
 
 def _app(catalogue=None, web_root=None):
@@ -239,12 +250,26 @@ def test_the_catalogue_lists_versions_as_plain_json():
 
     assert client.get("/api/v1/catalogue").json() == {
         "versions": [{"id": "import-1", "variables": ["water_temp"]}],
-        "unavailable": []}
+        "unavailable": [],
+        "observation_versions": [],
+        "observation_unavailable": [],
+        "observation_failure": None}
+
+
+def test_an_observation_outage_is_a_coded_partial_failure():
+    catalogue = _Catalogue((_Version("import-1", ("water_temp",)),),
+                           observations_fail=True)
+    response = _app(catalogue).get("/api/v1/catalogue")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [v["id"] for v in body["versions"]] == ["import-1"]
+    assert body["observation_versions"] is None
+    assert body["observation_failure"]["code"] == "observation_catalogue_unavailable"
+    assert "secret" not in response.text
 
 
 def test_the_catalogue_reports_versions_it_could_not_read():
-    from ingestion.query import DatasetVersionListing, UnavailableDatasetVersion
-
     listing = DatasetVersionListing(
         versions=(), unavailable=(UnavailableDatasetVersion("import-9", "the stored object could not be opened"),))
     body = _app(_Catalogue(listing)).get("/api/v1/catalogue").json()

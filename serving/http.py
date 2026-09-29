@@ -11,7 +11,8 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Protocol, Sequence
+from collections.abc import Iterator
+from typing import Any, Protocol
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
@@ -33,10 +34,21 @@ API = "/api/v1"
 log = logging.getLogger(__name__)
 
 
-class Catalogue(Protocol):
-    """The S3 catalogue read S5 exposes. Entries are dataclasses."""
+class Listing(Protocol):
+    """Readable entries (dataclasses) plus those S3 could not describe."""
 
-    def list_model_versions(self) -> Sequence[Any]: ...
+    @property
+    def unavailable(self) -> tuple[Any, ...]: ...
+
+    def __iter__(self) -> Iterator[Any]: ...
+
+
+class Catalogue(Protocol):
+    """The S3 catalogue reads S5 exposes."""
+
+    def list_model_versions(self) -> Listing: ...
+
+    def list_observation_versions(self) -> Listing: ...
 
 
 class Strict(BaseModel):
@@ -133,22 +145,24 @@ def create_app(coordinator: RequestCoordinator,
                 "code": "catalogue_unavailable",
                 "message": "the model catalogue could not be read"}) from exc
         # Versions S3 could not read are reported, not silently omitted.
-        unavailable = getattr(versions, "unavailable", ())
         body: dict[str, Any] = {
             "versions": [wire.plain(version) for version in versions],
-            "unavailable": [wire.plain(item) for item in unavailable]}
-        list_observations = getattr(catalogue, "list_observation_versions", None)
-        if list_observations is not None:
-            try:
-                listing = list_observations()
-            except Exception:
-                log.exception("observation catalogue listing failed")
-                body["observation_versions"] = None
-                body["observation_unavailable"] = []
-            else:
-                body["observation_versions"] = [wire.plain(v) for v in listing]
-                body["observation_unavailable"] = [
-                    wire.plain(item) for item in getattr(listing, "unavailable", ())]
+            "unavailable": [wire.plain(item) for item in versions.unavailable]}
+        # Observations are a partial result: the model listing above stands,
+        # and an observation outage is a coded failure, never bare nulls.
+        try:
+            listing = catalogue.list_observation_versions()
+        except Exception:
+            log.exception("observation catalogue listing failed")
+            body.update(observation_versions=None, observation_unavailable=[],
+                        observation_failure={
+                            "code": "observation_catalogue_unavailable",
+                            "message": "the observation catalogue could not be read"})
+        else:
+            body.update(
+                observation_versions=[wire.plain(v) for v in listing],
+                observation_unavailable=[wire.plain(u) for u in listing.unavailable],
+                observation_failure=None)
         return body
 
     @app.post(f"{API}/point-fields", status_code=202)
