@@ -10,3 +10,21 @@ html, body, #root { height: 100%; margin: 0; }
 .overlay.bottom-right { bottom: 28px; right: 12px; max-width: 400px; }
 .colour-bar { height: 12px; border-radius: 2px; }
 .mono { font-variant-numeric: tabular-nums; }
+
+/* Sea-surface viewer: the globe fills the window, panels float over it. */
+.viewer { position: fixed; inset: 0; background: #02070d; }
+.overlay.top-left { top: 16px; left: 16px; }
+.overlay.bottom { bottom: 24px; left: 50%; transform: translateX(-50%); width: min(760px, calc(100% - 32px)); }
+.glass {
+  background: rgba(12, 22, 34, 0.78) !important;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(160, 200, 230, 0.14);
+}
+.time-slider { flex: 1; }
+@media (max-width: 720px) {
+  .overlay.top-left { left: 8px; right: 8px; top: 8px; }
+  .overlay.top-left .glass { width: auto !important; }
+  .overlay.bottom-right { display: none; }
+}
+.viewer .overlay.bottom-right { bottom: 100px; right: 16px; }
+.viewer .overlay.top-right { top: 16px; right: 16px; }

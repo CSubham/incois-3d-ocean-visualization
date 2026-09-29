@@ -9,9 +9,12 @@
 // another engine replaces the implementation, not the UI.
 
 import type { MarkerSet } from "../api/observationWire";
-import type { PointFieldArrays, ProductDescriptor } from "../api/wire";
+import type { NumericArray, PointFieldArrays, ProductDescriptor } from "../api/wire";
+import type { SurfaceStyle } from "./surface";
 
-export type PaletteName = "viridis" | "cividis" | "thermal";
+export type { SurfaceStyle } from "./surface";
+
+export type PaletteName = "viridis" | "cividis" | "thermal" | "speed";
 export type ScaleKind = "linear" | "log";
 
 export interface DisplayState {
@@ -46,6 +49,44 @@ export interface MarkerPick {
   observedAt: string;
 }
 
+/** One horizontal level on a regular longitude/latitude grid, draped on the
+ *  globe. Values are flat, row-major over (latitude, longitude). */
+export interface SurfaceField {
+  longitude: NumericArray;
+  latitude: NumericArray;
+  values: NumericArray;
+  missingValueMask: Uint8Array;
+  units: string;
+  /** A vector field's components; ``values`` then holds its speed. */
+  components?: { eastward: NumericArray; northward: NumericArray };
+}
+
+/** One surface cell under the pointer, with its exact source values. */
+export interface SurfaceSample {
+  longitude: number;
+  latitude: number;
+  value: number;
+  units: string;
+  eastward?: number;
+  northward?: number;
+}
+
+/** Arrows at explicitly sampled cells of a vector field (sampling is S4's). */
+export interface ArrowSet {
+  longitude: NumericArray;
+  latitude: NumericArray;
+  eastward: NumericArray;
+  northward: NumericArray;
+  speed: NumericArray;
+}
+
+export type SurfaceOutcome =
+  | { status: "shown"; shownCells: number; hiddenMissingCells: number }
+  /** Not drawn; the previous surface, if any, is still displayed. */
+  | { status: "refused"; reason: string }
+  /** A later hand-over replaced this one before it was drawn. */
+  | { status: "superseded" };
+
 /** What became of a point field handed to the renderer. */
 export type FieldOutcome =
   | { status: "shown"; shownPoints: number; hiddenMissingPoints: number }
@@ -65,6 +106,8 @@ export type DisplayOutcome =
 export type RendererEvent =
   | { type: "pick"; marker: MarkerPick }
   | { type: "hover"; sample: PointSample | null }
+  /** The surface cell under the pointer, or null off the surface. */
+  | { type: "probe"; sample: SurfaceSample | null }
   /** The browser cannot run this renderer at all. */
   | { type: "unsupported"; reason: string }
   /** Rendering stopped; a later successfully shown field clears it. */
@@ -72,7 +115,9 @@ export type RendererEvent =
   /** The graphics context is gone and this renderer cannot restore it. */
   | { type: "contextLost"; reason: string };
 
-export type RendererCommand = { type: "resetCamera" };
+export type RendererCommand =
+  | { type: "resetCamera" }
+  | { type: "flyTo"; west: number; east: number; south: number; north: number };
 
 export interface Renderer {
   readonly capabilities: RendererCapabilities;
@@ -83,6 +128,12 @@ export interface Renderer {
   showMarkers(markers: MarkerSet): MarkerOutcome;
   clearMarkers(): void;
   applyDisplay(display: DisplayState): DisplayOutcome;
+  /** Replace the draped surface layer once the new image is ready, so an
+   *  animation never flashes an empty globe. */
+  showSurface(field: SurfaceField, style: SurfaceStyle): Promise<SurfaceOutcome>;
+  clearSurface(): void;
+  showArrows(arrows: ArrowSet, maximumSpeed: number): MarkerOutcome;
+  clearArrows(): void;
   command(command: RendererCommand): void;
   onEvent(listener: (event: RendererEvent) => void): () => void;
   dispose(): void;

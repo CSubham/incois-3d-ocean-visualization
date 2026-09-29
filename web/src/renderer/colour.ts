@@ -13,6 +13,9 @@ const ANCHORS: Record<PaletteName, string[]> = {
             "#d3c064", "#ffe945"],
   thermal: ["#042333", "#2c3395", "#744992", "#b15f82", "#eb7655",
             "#fbb43d", "#e8fa5b"],
+  // cmocean speed, reversed so slow water stays dark against the globe.
+  speed: ["#0e2a1c", "#16492a", "#1f6b2e", "#3f8f2a", "#79a93b",
+          "#b2c05f", "#e2d98f", "#fffdcd"],
 };
 
 export const PALETTES = Object.keys(ANCHORS) as PaletteName[];

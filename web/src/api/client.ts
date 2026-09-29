@@ -5,6 +5,7 @@
 
 import type { MarkerDescriptor, ProfileDescriptor } from "./observationWire";
 import type { ProductDescriptor } from "./wire";
+import type { SliceDescriptor, VectorDescriptor } from "./sliceWire";
 
 export interface CatalogueVersion {
   id: string;
@@ -69,6 +70,14 @@ export interface PointFieldIntent {
   maximum_points: number;
 }
 
+/** One time and depth of a stored version, inside a geographic box. */
+export interface SliceWindow {
+  dataset_version_id: string;
+  time: string;
+  depth: number;
+  west: number; east: number; south: number; north: number;
+}
+
 export interface Failure { code: string; message: string }
 
 export interface Budget {
@@ -100,6 +109,8 @@ export interface DataClient {
   /** Submit and wait until the request finishes, succeeded or failed. */
   pointField(intent: PointFieldIntent, signal?: AbortSignal): Promise<RequestView>;
   productData(url: string, signal?: AbortSignal): Promise<ArrayBuffer>;
+  depthSlice(window: SliceWindow, variable: string, signal?: AbortSignal): Promise<SliceDescriptor>;
+  vectorSlice(window: SliceWindow, eastward: string, northward: string, signal?: AbortSignal): Promise<VectorDescriptor>;
 }
 
 type Fetch = typeof fetch;
@@ -149,6 +160,16 @@ export class HttpDataClient implements DataClient {
     return view;
   }
 
+  depthSlice(window: SliceWindow, variable: string, signal?: AbortSignal): Promise<SliceDescriptor> {
+    return this.json(`/api/v1/depth-slices?${query({ ...window, variable })}`, { signal }) as Promise<SliceDescriptor>;
+  }
+
+  vectorSlice(window: SliceWindow, eastward: string, northward: string,
+              signal?: AbortSignal): Promise<VectorDescriptor> {
+    return this.json(`/api/v1/vector-slices?${query({ ...window, eastward, northward })}`,
+      { signal }) as Promise<VectorDescriptor>;
+  }
+
   async productData(url: string, signal?: AbortSignal): Promise<ArrayBuffer> {
     const response = await this.fetchImpl(url, { signal });
     if (!response.ok) throw await serviceError(response);
@@ -160,6 +181,10 @@ export class HttpDataClient implements DataClient {
     if (!response.ok) throw await serviceError(response);
     return response.json();
   }
+}
+
+function query(values: Record<string, string | number>): URLSearchParams {
+  return new URLSearchParams(Object.entries(values).map(([k, v]) => [k, String(v)]));
 }
 
 async function serviceError(response: Response): Promise<ServiceError> {

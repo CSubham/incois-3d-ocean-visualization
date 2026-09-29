@@ -13,9 +13,10 @@
 // refusal leaves the previous field displayed exactly as S7 still describes it.
 
 import {
-  BoundingSphere, buildModuleUrl, Cartesian3, Color, GridImageryProvider,
-  HeadingPitchRange, ImageryLayer, PointPrimitive, PointPrimitiveCollection,
-  Rectangle, ScreenSpaceEventHandler, ScreenSpaceEventType,
+  BillboardCollection, BoundingSphere, buildModuleUrl, Cartesian3, Cartographic,
+  Color, Ellipsoid, GridImageryProvider, HeadingPitchRange, ImageryLayer,
+  Math as CesiumMath, PointPrimitive, PointPrimitiveCollection, Rectangle,
+  ScreenSpaceEventHandler, ScreenSpaceEventType, SingleTileImageryProvider,
   TileMapServiceImageryProvider, Viewer, type Cartesian2, type Entity,
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
@@ -24,16 +25,28 @@ import type { MarkerSet } from "../../api/observationWire";
 import type { NumericArray, PointFieldArrays, ProductDescriptor } from "../../api/wire";
 import { logScaleProblem, normalise, paletteColour } from "../colour";
 import type {
-  DisplayOutcome, DisplayState, FieldOutcome, MarkerOutcome, PointSample,
-  Renderer, RendererCapabilities, RendererCommand, RendererEvent,
+  ArrowSet, DisplayOutcome, DisplayState, FieldOutcome, MarkerOutcome, PointSample,
+  Renderer, RendererCapabilities, RendererCommand, RendererEvent, SurfaceField,
+  SurfaceOutcome, SurfaceSample, SurfaceStyle,
 } from "../contract";
 import { markerPick } from "../markers";
+import { cellAt, gridGeometry, rasterise, SurfaceError, type GridGeometry } from "../surface";
 import { isGeographicCrs, sceneFrame, TransformError } from "../transform";
 
 const POINT_PIXELS = 4;
 const MARKER_PIXELS = 11;
 const MARKER_FILL = Color.fromCssColorString("#ffcf5a");
 const REGION_OUTLINE = Color.fromCssColorString("#9fd3ea").withAlpha(0.9);
+const SURFACE_ALPHA = 0.92;
+/** Arrows sit just above the sea surface so the globe never hides them. */
+const ARROW_HEIGHT_M = 2_000;
+const ARROW_PIXELS = 22;
+
+interface Surface {
+  layer: ImageryLayer;
+  geometry: GridGeometry;
+  field: SurfaceField;
+}
 
 interface Layer {
   collection: PointPrimitiveCollection;
@@ -59,6 +72,11 @@ export class CesiumRenderer implements Renderer {
   private display?: DisplayState;
   private hovered: number | null = null;
   private markers?: { collection: PointPrimitiveCollection; set: MarkerSet };
+  private surface?: Surface;
+  /** Increments per hand-over; an image finishing after a newer one is dropped. */
+  private surfaceGeneration = 0;
+  private probedCell: number | null = null;
+  private arrows?: BillboardCollection;
 
   constructor(maximumPoints: number) {
     this.capabilities = { engine: "CesiumJS on WebGL2", maximumPoints };
@@ -68,7 +86,7 @@ export class CesiumRenderer implements Renderer {
     try {
       this.viewer = new Viewer(container, {
         baseLayer: ImageryLayer.fromProviderAsync(TileMapServiceImageryProvider.fromUrl(
-          buildModuleUrl("Assets/Textures/NaturalEarthII"))),
+          buildModuleUrl("Assets/Textures/NaturalEarthII")), { brightness: 0.8 }),
         baseLayerPicker: false, geocoder: false, homeButton: false,
         sceneModePicker: false, navigationHelpButton: false, animation: false,
         timeline: false, fullscreenButton: false, infoBox: false,
@@ -248,8 +266,113 @@ export class CesiumRenderer implements Renderer {
     return { status: "applied" };
   }
 
+  async showSurface(field: SurfaceField, style: SurfaceStyle): Promise<SurfaceOutcome> {
+    const viewer = this.viewer;
+    if (!viewer) return { status: "refused", reason: "the 3D view is not available" };
+    let geometry: GridGeometry;
+    let pixels: Uint8ClampedArray<ArrayBuffer>;
+    try {
+      geometry = gridGeometry(field.longitude, field.latitude);
+      const problem = style.scale === "log" ? logScaleProblem(style.range.minimum, style.range.maximum) : null;
+      if (problem) return { status: "refused", reason: problem };
+      pixels = rasterise(field.values, field.missingValueMask, geometry, style);
+    } catch (error) {
+      if (error instanceof SurfaceError) return { status: "refused", reason: error.message };
+      throw error;
+    }
+    const generation = ++this.surfaceGeneration;
+    const canvas = document.createElement("canvas");
+    canvas.width = geometry.columns;
+    canvas.height = geometry.rows;
+    canvas.getContext("2d")!.putImageData(new ImageData(pixels, geometry.columns, geometry.rows), 0, 0);
+    const url = await new Promise<string>((resolve, reject) => canvas.toBlob(
+      (blob) => (blob ? resolve(URL.createObjectURL(blob)) : reject(new Error("the surface image could not be encoded"))),
+      "image/png"));
+    let provider: SingleTileImageryProvider;
+    try {
+      provider = await SingleTileImageryProvider.fromUrl(url, {
+        rectangle: Rectangle.fromDegrees(geometry.west, geometry.south, geometry.east, geometry.north),
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    if (generation !== this.surfaceGeneration || this.viewer !== viewer) return { status: "superseded" };
+
+    // The new image is ready: only now is the previous surface replaced.
+    const layer = new ImageryLayer(provider, { alpha: SURFACE_ALPHA });
+    viewer.imageryLayers.add(layer);
+    const previous = this.surface;
+    this.surface = { layer, geometry, field };
+    if (previous) viewer.imageryLayers.remove(previous.layer, true);
+    this.probedCell = null;
+    viewer.scene.requestRender();
+    let hidden = 0;
+    for (let i = 0; i < field.values.length; i++) {
+      if (field.missingValueMask[i] || !Number.isFinite(field.values[i])) hidden++;
+    }
+    return { status: "shown", shownCells: field.values.length - hidden, hiddenMissingCells: hidden };
+  }
+
+  clearSurface(): void {
+    this.surfaceGeneration++;   // an image still loading is dropped
+    const viewer = this.viewer;
+    if (!viewer || !this.surface) return;
+    viewer.imageryLayers.remove(this.surface.layer, true);
+    this.surface = undefined;
+    this.setProbe(null);
+    viewer.scene.requestRender();
+  }
+
+  showArrows(set: ArrowSet, maximumSpeed: number): MarkerOutcome {
+    const viewer = this.viewer;
+    if (!viewer) return { status: "refused", reason: "the 3D view is not available" };
+    this.clearArrows();
+    const collection = viewer.scene.primitives.add(new BillboardCollection()) as BillboardCollection;
+    const image = arrowImage();
+    const ellipsoid = Ellipsoid.WGS84;
+    const normal = new Cartesian3();
+    const north = new Cartesian3();
+    const top = maximumSpeed > 0 ? maximumSpeed : 1;
+    for (let i = 0; i < set.longitude.length; i++) {
+      const position = Cartesian3.fromDegrees(set.longitude[i], set.latitude[i], ARROW_HEIGHT_M);
+      // Local north: the Earth's axis projected onto the tangent plane.
+      ellipsoid.geodeticSurfaceNormal(position, normal);
+      Cartesian3.subtract(Cartesian3.UNIT_Z, Cartesian3.multiplyByScalar(normal, normal.z, north), north);
+      Cartesian3.normalize(north, north);
+      const fraction = Math.min(1, set.speed[i] / top);
+      collection.add({
+        position,
+        image,
+        width: ARROW_PIXELS, height: ARROW_PIXELS,
+        scale: 0.45 + 0.75 * fraction,
+        alignedAxis: Cartesian3.clone(north),
+        // Bearing clockwise from north; billboard rotation is anticlockwise.
+        rotation: -Math.atan2(set.eastward[i], set.northward[i]),
+        color: Color.WHITE.withAlpha(0.55 + 0.4 * fraction),
+      });
+    }
+    this.arrows = collection;
+    viewer.scene.requestRender();
+    return { status: "shown", count: set.longitude.length };
+  }
+
+  clearArrows(): void {
+    const viewer = this.viewer;
+    if (!viewer || !this.arrows) return;
+    viewer.scene.primitives.remove(this.arrows);   // releases GPU resources
+    this.arrows = undefined;
+    viewer.scene.requestRender();
+  }
+
   command(command: RendererCommand): void {
     if (command.type === "resetCamera") this.flyToRegion();
+    if (command.type === "flyTo" && this.viewer) {
+      const { west, east, south, north } = command;
+      this.viewer.camera.flyTo({
+        destination: Rectangle.fromDegrees(west, south, east, north),
+        duration: 1.6,
+      });
+    }
   }
 
   onEvent(listener: (event: RendererEvent) => void): () => void {
@@ -258,6 +381,8 @@ export class CesiumRenderer implements Renderer {
   }
 
   dispose(): void {
+    this.clearArrows();
+    this.clearSurface();
     this.clearMarkers();
     this.clear();
     this.handler?.destroy();
@@ -320,6 +445,7 @@ export class CesiumRenderer implements Renderer {
   private hover(position: Cartesian2): void {
     const viewer = this.viewer;
     if (viewer) viewer.scene.canvas.style.cursor = this.markerIndexAt(position) !== null ? "pointer" : "";
+    if (viewer && this.surface) this.probe(position);
     const layer = this.layer;
     if (!viewer || !layer) return;
     const picked = viewer.scene.pick(position);
@@ -340,6 +466,47 @@ export class CesiumRenderer implements Renderer {
     this.emit({ type: "hover", sample });
   }
 
+  private probe(position: Cartesian2): void {
+    const viewer = this.viewer;
+    const surface = this.surface;
+    if (!viewer || !surface) return;
+    const cartesian = viewer.camera.pickEllipsoid(position, Ellipsoid.WGS84);
+    if (!cartesian) {
+      this.setProbe(null);
+      return;
+    }
+    const where = Cartographic.fromCartesian(cartesian);
+    const longitude = CesiumMath.toDegrees(where.longitude);
+    const latitude = CesiumMath.toDegrees(where.latitude);
+    const cell = cellAt(surface.geometry, longitude, latitude);
+    const { field } = surface;
+    if (cell === null || field.missingValueMask[cell] || !Number.isFinite(field.values[cell])) {
+      this.setProbe(null);
+      return;
+    }
+    if (cell === this.probedCell) return;
+    this.probedCell = cell;
+    const columns = surface.geometry.columns;
+    const sample: SurfaceSample = {
+      // The source cell's own coordinates, not the pointer's.
+      longitude: field.longitude[cell % columns],
+      latitude: field.latitude[Math.floor(cell / columns)],
+      value: field.values[cell],
+      units: field.units,
+    };
+    if (field.components) {
+      sample.eastward = field.components.eastward[cell];
+      sample.northward = field.components.northward[cell];
+    }
+    this.emit({ type: "probe", sample });
+  }
+
+  private setProbe(sample: SurfaceSample | null): void {
+    if (sample === null && this.probedCell === null) return;
+    this.probedCell = null;
+    this.emit({ type: "probe", sample });
+  }
+
   private emit(event: RendererEvent): void {
     for (const listener of this.listeners) listener(event);
   }
@@ -352,4 +519,30 @@ function extent(longitude: NumericArray, latitude: NumericArray) {
     south = Math.min(south, latitude[i]); north = Math.max(north, latitude[i]);
   }
   return { west, east, south, north };
+}
+
+let arrow: HTMLCanvasElement | undefined;
+
+/** A white arrow pointing up (north before rotation), drawn once. */
+function arrowImage(): HTMLCanvasElement {
+  if (arrow) return arrow;
+  arrow = document.createElement("canvas");
+  arrow.width = 32;
+  arrow.height = 32;
+  const g = arrow.getContext("2d")!;
+  g.strokeStyle = "white";
+  g.fillStyle = "white";
+  g.lineWidth = 3;
+  g.lineCap = "round";
+  g.beginPath();
+  g.moveTo(16, 29);
+  g.lineTo(16, 9);
+  g.stroke();
+  g.beginPath();
+  g.moveTo(16, 2);
+  g.lineTo(23, 13);
+  g.lineTo(9, 13);
+  g.closePath();
+  g.fill();
+  return arrow;
 }
