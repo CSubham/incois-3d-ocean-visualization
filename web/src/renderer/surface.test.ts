@@ -20,6 +20,23 @@ describe("surface grids", () => {
     expect(gridGeometry(rounded, lat).longitudeStep).toBeCloseTo(0.08, 4);
   });
 
+  it("accepts a partial last block from S4's reduction, as 4251 rows by 4 give", () => {
+    // Block centres of 0.04-degree rows from -80, four at a time: the last
+    // block holds 3 rows, so its centre is 0.14 after the previous, not 0.16.
+    const rows = 4251, factor = 4;
+    const centres: number[] = [];
+    for (let start = 0; start < rows; start += factor) {
+      const count = Math.min(factor, rows - start);
+      centres.push(-80 + 0.04 * (start + (count - 1) / 2));
+    }
+    const g = gridGeometry(lon, new Float64Array(centres));
+    expect(g.rows).toBe(1063);
+    expect(g.south).toBeCloseTo(-80.02, 6);
+    expect(g.north).toBe(90);   // the last source row sits at 90; its edge is clamped to the pole
+    // A position in the partial cell finds it.
+    expect(cellAt(g, 30.0, 89.99)! >= (g.rows - 1) * g.columns).toBe(true);
+  });
+
   it("refuses irregular spacing instead of stretching the image", () => {
     expect(() => gridGeometry(new Float64Array([0, 1, 3]), lat)).toThrow(SurfaceError);
   });

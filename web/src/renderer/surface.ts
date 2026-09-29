@@ -51,28 +51,53 @@ export interface SurfaceStyle {
  *  far below one pixel. */
 const POSITION_TOLERANCE = 0.01;
 
-function step(axis: NumericArray, name: string): number {
-  if (axis.length < 2) throw new SurfaceError(`the ${name} axis needs at least two cells`);
-  const mean = (axis[axis.length - 1] - axis[0]) / (axis.length - 1);
-  if (!Number.isFinite(mean) || mean === 0) throw new SurfaceError(`the ${name} axis is not increasing or decreasing`);
-  for (let i = 0; i < axis.length; i++) {
-    const offset = Math.abs(axis[i] - (axis[0] + i * mean));
-    if (offset > Math.abs(mean) * POSITION_TOLERANCE) {
-      throw new SurfaceError(`the ${name} spacing is irregular, so the field cannot be drawn as one image`);
-    }
+interface Axis {
+  /** Spacing of the regular cells (signed: negative for a descending axis). */
+  step: number;
+  /** Outer edges of the first and last cells, in axis order. */
+  firstEdge: number;
+  lastEdge: number;
+}
+
+/**
+ * A regular axis, except that its last cell may be a partial block: S4's
+ * block mean ends with fewer source cells when the axis does not divide by
+ * the factor, so that cell's centre lies between half a step and one step
+ * after the previous one. Its true outer edge follows from that centre, so
+ * the image covers exactly the delivered cells.
+ */
+function regularAxis(axis: NumericArray, name: string): Axis {
+  const n = axis.length;
+  if (n < 2) throw new SurfaceError(`the ${name} axis needs at least two cells`);
+  const irregular = () => new SurfaceError(`the ${name} spacing is irregular, so the field cannot be drawn as one image`);
+  if (n === 2) {
+    const step = axis[1] - axis[0];
+    if (!Number.isFinite(step) || step === 0) throw new SurfaceError(`the ${name} axis is not increasing or decreasing`);
+    return { step, firstEdge: axis[0] - step / 2, lastEdge: axis[1] + step / 2 };
   }
-  return mean;
+  const step = (axis[n - 2] - axis[0]) / (n - 2);
+  if (!Number.isFinite(step) || step === 0) throw new SurfaceError(`the ${name} axis is not increasing or decreasing`);
+  const tolerance = Math.abs(step) * POSITION_TOLERANCE;
+  for (let i = 0; i < n - 1; i++) {
+    if (Math.abs(axis[i] - (axis[0] + i * step)) > tolerance) throw irregular();
+  }
+  // The last cell: a full step, or a partial block of at least half of one.
+  const last = (axis[n - 1] - axis[n - 2]) / step;
+  if (last < 0.5 - POSITION_TOLERANCE || last > 1 + POSITION_TOLERANCE) throw irregular();
+  const previousEdge = axis[n - 2] + step / 2;
+  return { step, firstEdge: axis[0] - step / 2, lastEdge: 2 * axis[n - 1] - previousEdge };
 }
 
 export function gridGeometry(longitude: NumericArray, latitude: NumericArray): GridGeometry {
-  const longitudeStep = step(longitude, "longitude");
-  const latitudeStep = step(latitude, "latitude");
+  const lonAxis = regularAxis(longitude, "longitude");
+  const latAxis = regularAxis(latitude, "latitude");
+  const longitudeStep = lonAxis.step;
+  const latitudeStep = latAxis.step;
   if (longitudeStep < 0) throw new SurfaceError("longitudes decreasing west to east are not supported");
   const halfLon = longitudeStep / 2;
-  const halfLat = Math.abs(latitudeStep) / 2;
-  const lats = [latitude[0], latitude[latitude.length - 1]];
-  const west = longitude[0] - halfLon;
-  const east = longitude[longitude.length - 1] + halfLon;
+  const latEdges = [latAxis.firstEdge, latAxis.lastEdge];
+  const west = lonAxis.firstEdge;
+  const east = lonAxis.lastEdge;
   // One cell of slack: rounded coordinates may overshoot a full circle.
   if (east - west > 360 + longitudeStep) throw new SurfaceError("the field wraps more than once around the globe");
   // A regional field keeps its columns; one crossing the antimeridian gets
@@ -98,8 +123,8 @@ export function gridGeometry(longitude: NumericArray, latitude: NumericArray): G
     rows: latitude.length,
     west,
     east,
-    south: Math.max(-90, Math.min(...lats) - halfLat),
-    north: Math.min(90, Math.max(...lats) + halfLat),
+    south: Math.max(-90, Math.min(...latEdges)),
+    north: Math.min(90, Math.max(...latEdges)),
     longitudeStep,
     latitudeStep,
     firstLongitude: longitude[0],
@@ -143,9 +168,13 @@ export function cellAt(geometry: GridGeometry, longitude: number, latitude: numb
   while (lon < geometry.west) lon += 360;
   while (lon >= geometry.east) lon -= 360;
   if (lon < geometry.west || latitude < geometry.south || latitude > geometry.north) return null;
-  const column = Math.round((lon - geometry.firstLongitude) / geometry.longitudeStep);
-  const row = Math.round((latitude - geometry.firstLatitude) / geometry.latitudeStep);
-  if (column < 0 || column >= geometry.columns || row < 0 || row >= geometry.rows) return null;
+  // Inside the outer edges, a position past the last full step belongs to
+  // the (possibly partial) last cell.
+  const column = Math.min(geometry.columns - 1,
+    Math.round((lon - geometry.firstLongitude) / geometry.longitudeStep));
+  const row = Math.min(geometry.rows - 1,
+    Math.round((latitude - geometry.firstLatitude) / geometry.latitudeStep));
+  if (column < 0 || row < 0) return null;
   return row * geometry.columns + column;
 }
 
