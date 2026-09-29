@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 import psycopg
+
+from ingestion.storage.migrate import migrate
 import xarray as xr
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
@@ -378,11 +380,10 @@ def rebuild_live_catalogue(dsn: str) -> Mapping[str, Any]:
         connection.execute(sql.SQL("CREATE DATABASE {}").format(
             sql.Identifier(LIVE_DATABASE)))
 
-    schema_path = Path(__file__).parents[1] / "storage" / "schema.sql"
+    # Applied twice: the second run must find nothing pending.
+    migrate(dsn)
+    assert migrate(dsn) == []
     with psycopg.connect(dsn) as connection:
-        schema = schema_path.read_text(encoding="utf-8")
-        connection.execute(schema)
-        connection.execute(schema)
         extension = connection.execute(
             "SELECT extversion FROM pg_extension WHERE extname = 'postgis'"
         ).fetchone()

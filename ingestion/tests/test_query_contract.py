@@ -247,8 +247,8 @@ def test_schema_migrates_legacy_vertical_extents_idempotently(catalogue_case):
     dsn, reason = live_dsn_status()
     assert reason is None
     assert dsn is not None
-    schema = (Path(__file__).parents[1] / "storage" / "schema.sql").read_text(
-        encoding="utf-8")
+    schema = (Path(__file__).parents[1] / "storage" / "migrations"
+              / "0001_catalogue_baseline.sql").read_text(encoding="utf-8")
     with psycopg.connect(dsn) as connection:
         connection.execute(
             "UPDATE dataset_version SET vertical_min = NULL, "

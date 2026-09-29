@@ -19,7 +19,7 @@ Both dataset versions and observation-profile index rows now store
 `vertical_kind` is `depth` or `pressure` when units establish that meaning.
 The existing `depth_min` and `depth_max` fields remain a depth-only
 compatibility view and are null for pressure coordinates. Applying
-`storage/schema.sql` repeatedly is safe; it migrates legacy extents from their
+`storage/migrations/0001_catalogue_baseline.sql` (formerly `storage/schema.sql`) repeatedly is safe; it migrates legacy extents from their
 preserved vertical units without converting pressure to depth.
 
 ## S3 read-contract handoff

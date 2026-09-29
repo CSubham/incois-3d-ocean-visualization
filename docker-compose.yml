@@ -3,7 +3,7 @@
 # question the visualization asks, and it should not require opening arrays.
 #
 #   docker compose up -d
-#   psql "$INGESTION_CATALOGUE_DSN" -f ingestion/storage/schema.sql
+#   python -m ingestion.storage.migrate     # applies pending migrations
 #
 # Port 5433, not 5432, so it cannot collide with a Postgres already running.
 
