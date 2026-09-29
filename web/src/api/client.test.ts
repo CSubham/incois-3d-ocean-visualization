@@ -46,7 +46,10 @@ describe("HttpDataClient observations", () => {
   it("reads both halves of the catalogue, keeping an unreadable observation half as null", async () => {
     const ok = new HttpDataClient(fakeFetch([json({ versions: [], observation_versions: [{ dataset_version_id: "o1" }] })]).impl);
     expect((await ok.catalogue()).observations).toEqual([{ dataset_version_id: "o1" }]);
-    const down = new HttpDataClient(fakeFetch([json({ versions: [], observation_versions: null })]).impl);
+    const down = new HttpDataClient(fakeFetch([json({
+      versions: [], observation_versions: null,
+      observation_failure: { code: "observation_catalogue_unavailable", message: "m" },
+    })]).impl);
     expect((await down.catalogue()).observations).toBeNull();
   });
 

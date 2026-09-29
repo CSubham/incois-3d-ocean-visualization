@@ -52,6 +52,29 @@ jobs:
           python -m ingestion.storage.migrate
           python -m ingestion.storage.migrate --check
 
+  web:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Test (includes the wire golden fixtures written by Python)
+        run: npm test
+      - name: Type-check and build
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 7
+
   image:
     runs-on: ubuntu-24.04
     needs: backend

@@ -59,7 +59,9 @@ and exits 1 when the schema is not current.
 - the test suite against a PostGIS service container, excluding tests
   marked `network`;
 - migrate and `--check`;
-- building the image and probing `/health/live` in a running container.
+- building the image and probing `/health/live` in a running container;
+- the web app's tests, type-check and production build. The build is kept
+  as the `web-dist` artifact, which is what Static Web Apps serves.
 
 Nothing is pushed to a registry yet. That needs ACR and credentials from the
 owner.
@@ -69,7 +71,6 @@ owner.
 - **Object store:** only `LocalObjectStore` exists. On Container Apps, use
   either an Azure Files mount or the Blob adapter (agent A's lane). The
   adapter is the intended route.
-- **Web image/build:** arrives with the S6/S7 branch.
 - **Unverified here:** the image was not built in this environment (no
   Docker in the agent sandbox). CI is its first build.
 - **Runtime requirements:** they still include pytest.

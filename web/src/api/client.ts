@@ -112,9 +112,13 @@ export class HttpDataClient implements DataClient {
 
   async catalogue(signal?: AbortSignal): Promise<Catalogue> {
     const body = await this.json("/api/v1/catalogue", { signal }) as {
-      versions: CatalogueVersion[]; observation_versions?: ObservationVersion[] | null;
+      versions: CatalogueVersion[];
+      observation_versions?: ObservationVersion[] | null;
+      observation_failure?: { code: string; message: string } | null;
     };
-    return { versions: body.versions, observations: body.observation_versions ?? null };
+    // The model half stands on its own; an observation outage is coded.
+    const down = body.observation_failure != null || body.observation_versions == null;
+    return { versions: body.versions, observations: down ? null : body.observation_versions ?? null };
   }
 
   observationMarkers(query: MarkerQuery, signal?: AbortSignal): Promise<MarkerDescriptor> {
