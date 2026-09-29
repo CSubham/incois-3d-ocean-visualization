@@ -452,3 +452,41 @@ def test_vertical_kind_comes_from_units_and_refuses_the_unknown():
     assert observation_vertical_kind("m") == "depth"
     assert observation_vertical_kind("fathoms") is None
     assert observation_vertical_kind(None) is None
+
+
+def test_stored_arrays_are_read_by_one_thread_at_a_time(tmp_path):
+    """netCDF-C is not thread-safe: concurrent opens must not overlap."""
+    import threading
+    import time as clock
+
+    from ingestion.storage.query import CatalogueModelFieldQuery, _close_and_release
+    from ingestion.tests.query_support import model_dataset
+
+    active = 0
+    overlap = False
+    guard = threading.Lock()
+
+    class SlowStore:
+        def open(self, reference):
+            nonlocal active, overlap
+            with guard:
+                active += 1
+                overlap = overlap or active > 1
+            clock.sleep(0.02)
+            dataset = model_dataset()
+
+            def close():
+                nonlocal active
+                with guard:
+                    active -= 1
+            dataset.set_close(close)
+            return dataset
+
+    query = CatalogueModelFieldQuery("postgresql://unused", SlowStore(), {})
+    threads = [threading.Thread(target=lambda: _close_and_release(query._open("x.nc")))
+               for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert not overlap and active == 0

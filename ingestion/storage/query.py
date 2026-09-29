@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
@@ -186,7 +187,7 @@ class CatalogueModelFieldQuery(ScientificQuery):
             raise UndeclaredReference(
                 dataset_version_id, "a managed scientific object")
         try:
-            source_dataset = self._objects.open(reference)
+            source_dataset = self._open(reference)
         except Exception:
             raise ModelFieldQueryError(
                 "the managed scientific object could not be opened") from None
@@ -205,12 +206,13 @@ class CatalogueModelFieldQuery(ScientificQuery):
             dataset = source_dataset[selected]
             _remove_storage_references(dataset)
             return ManagedModelField(
-                dataset, descriptor, close=source_dataset.close)
+                dataset, descriptor,
+                close=lambda: _close_and_release(source_dataset))
         except ModelFieldQueryError:
-            _close_quietly(source_dataset)
+            _close_and_release(source_dataset)
             raise
         except Exception:
-            _close_quietly(source_dataset)
+            _close_and_release(source_dataset)
             raise ModelFieldQueryError(
                 "the managed scientific object could not be decoded") from None
 
@@ -274,7 +276,7 @@ class CatalogueModelFieldQuery(ScientificQuery):
             raise UndeclaredReference(
                 identity.dataset_version_id, "a managed scientific object")
         try:
-            source_dataset = self._objects.open(reference)
+            source_dataset = self._open(reference)
         except Exception:
             raise ModelFieldQueryError(
                 "the managed observation object could not be opened") from None
@@ -287,7 +289,7 @@ class CatalogueModelFieldQuery(ScientificQuery):
             raise ModelFieldQueryError(
                 "the managed observation profile could not be decoded") from None
         finally:
-            _close_quietly(source_dataset)
+            _close_and_release(source_dataset)
 
     def _summary_from_object(
         self,
@@ -300,7 +302,7 @@ class CatalogueModelFieldQuery(ScientificQuery):
             raise UndeclaredReference(
                 version_id, "a managed scientific object")
         try:
-            dataset = self._objects.open(reference)
+            dataset = self._open(reference)
         except Exception:
             raise ModelFieldQueryError(
                 f"dataset version {version_id!r} could not be opened") from None
@@ -312,7 +314,7 @@ class CatalogueModelFieldQuery(ScientificQuery):
             raise ModelFieldQueryError(
                 f"dataset version {version_id!r} could not be decoded") from None
         finally:
-            _close_quietly(dataset)
+            _close_and_release(dataset)
 
     def _summary_for_version(
         self,
@@ -377,6 +379,16 @@ class CatalogueModelFieldQuery(ScientificQuery):
             version_id: tuple(grouped[version_id])
             for version_id in dataset_version_ids
         }
+
+    def _open(self, reference: str) -> xr.Dataset:
+        """Open a stored array holding the array lock; close it with
+        ``_close_and_release``, which releases the lock."""
+        _ARRAY_ACCESS.acquire()
+        try:
+            return self._objects.open(reference)
+        except BaseException:
+            _ARRAY_ACCESS.release()
+            raise
 
     def _connection(self):
         if self._connect is not None:
@@ -1081,6 +1093,21 @@ def _portable_encoding(encoding: Mapping[str, Any]) -> dict[str, Any]:
             isinstance(value, str) and _looks_like_sensitive_reference(value)
         )
     }
+
+
+#: netCDF-C and HDF5 are not thread-safe, and xarray does not serialise
+#: opening and closing files. A stored array is therefore open in at most one
+#: thread of this process at a time: the lock is taken before opening and
+#: released after closing. Separate processes are unaffected, so throughput
+#: scales with worker processes. Reentrant, so one thread may nest opens.
+_ARRAY_ACCESS = threading.RLock()
+
+
+def _close_and_release(dataset: xr.Dataset) -> None:
+    try:
+        _close_quietly(dataset)
+    finally:
+        _ARRAY_ACCESS.release()
 
 
 def _close_quietly(dataset: xr.Dataset) -> None:

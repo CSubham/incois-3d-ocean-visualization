@@ -298,9 +298,16 @@ export class CesiumRenderer implements Renderer {
     }
     if (generation !== this.surfaceGeneration || this.viewer !== viewer) return { status: "superseded" };
 
-    // The new image is ready: only now is the previous surface replaced.
+    // The new layer goes on top of the old one, which stays visible until the
+    // globe has built every tile of the new one; only then is it removed, so
+    // an animation step never shows an empty sea.
     const layer = new ImageryLayer(provider, { alpha: SURFACE_ALPHA });
     viewer.imageryLayers.add(layer);
+    await tilesSettled(viewer);
+    if (generation !== this.surfaceGeneration || this.viewer !== viewer) {
+      if (this.viewer === viewer && !viewer.isDestroyed()) viewer.imageryLayers.remove(layer, true);
+      return { status: "superseded" };
+    }
     const previous = this.surface;
     this.surface = { layer, geometry, field };
     if (previous) viewer.imageryLayers.remove(previous.layer, true);
@@ -519,6 +526,34 @@ function extent(longitude: NumericArray, latitude: NumericArray) {
     south = Math.min(south, latitude[i]); north = Math.max(north, latitude[i]);
   }
   return { west, east, south, north };
+}
+
+/** Longest wait for new tiles before swapping anyway, so a stalled tile
+ *  cannot freeze an animation. */
+const TILE_WAIT_MS = 4_000;
+
+/** Resolves once the globe reports every visible tile loaded. */
+function tilesSettled(viewer: Viewer): Promise<void> {
+  return new Promise((resolve) => {
+    const { scene } = viewer;
+    const started = performance.now();
+    let seenLoading = false;
+    const check = () => {
+      // Adding a layer does not mark tiles dirty until the next frame, so a
+      // settled globe is trusted only after that frame has rendered.
+      if (!scene.globe.tilesLoaded) seenLoading = true;
+      const done = (scene.globe.tilesLoaded && (seenLoading || performance.now() - started > 250))
+        || performance.now() - started > TILE_WAIT_MS;
+      if (done) {
+        remove();
+        resolve();
+      } else {
+        scene.requestRender();
+      }
+    };
+    const remove = scene.postRender.addEventListener(check);
+    scene.requestRender();
+  });
 }
 
 let arrow: HTMLCanvasElement | undefined;
