@@ -220,19 +220,25 @@ def subset_scalar_field(dataset: xr.Dataset,
             f"longitude); this server builds at most {maximum_cells}. Narrow "
             "the area or depth range")
 
+    # Longitude is read as one contiguous run and reordered in memory: a
+    # selection across the axis seam is out of order, and storage backends
+    # read out-of-order indices far more slowly than a contiguous range.
+    first_column = int(longitude_indices.min())
+    columns = longitude_indices - first_column
     ordered = variable.isel({
         coordinate_dimensions["time"]: time_index,
         coordinate_dimensions["depth"]: depth_indices,
         coordinate_dimensions["latitude"]: latitude_indices,
-        coordinate_dimensions["longitude"]: longitude_indices,
+        coordinate_dimensions["longitude"]: slice(
+            first_column, int(longitude_indices.max()) + 1),
     }).transpose(coordinate_dimensions["depth"],
                  coordinate_dimensions["latitude"],
                  coordinate_dimensions["longitude"])
 
     raw_values = np.asanyarray(ordered.values)
-    values = np.array(np.ma.getdata(raw_values), copy=True)
-    missing_mask = np.asarray(np.ma.getmaskarray(raw_values), dtype=bool)
-    missing_mask |= np.asarray(ordered.isnull().values, dtype=bool)
+    values = np.array(np.ma.getdata(raw_values)[..., columns], copy=True)
+    missing_mask = np.asarray(np.ma.getmaskarray(raw_values), dtype=bool)[..., columns]
+    missing_mask |= np.isnan(values) if np.issubdtype(values.dtype, np.floating) else False
 
     selected_time = np.asarray(time_values[time_index]).copy()[()]
     coordinates = {"time": time, "depth": depth,

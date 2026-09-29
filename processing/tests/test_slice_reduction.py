@@ -126,3 +126,17 @@ def test_irregular_latitude_spacing_is_refused_for_area_weighting():
 
     with pytest.raises(GridValidationError, match="regular latitude spacing"):
         reduce_depth_slice(product, 1)
+
+
+def test_axes_stored_with_rounding_are_regular_enough_to_weight():
+    """HYCOM stores longitude rounded to ~1e-4 degrees and latitude as
+    float32; a regular grid must not be refused for that."""
+    from processing.slice_reduction import _regular_axis
+
+    longitude = np.array([30.0, 30.0799560546875, 30.1600341796875,
+                          30.239990234375, 30.3199462890625])
+    latitude = np.float32(-30.0) + np.float32(0.04) * np.arange(9, dtype=np.float32)
+    _regular_axis(longitude, "longitude")
+    _regular_axis(latitude.astype(np.float64), "latitude")
+    with pytest.raises(Exception, match="regular longitude"):
+        _regular_axis(np.array([0.0, 1.0, 3.0]), "longitude")

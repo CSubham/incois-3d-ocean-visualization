@@ -61,17 +61,24 @@ def reduction_factor(shape: tuple[int, int], maximum_cells: int,
     return factor
 
 
+#: How far a coordinate may sit from its place on the ideal regular axis,
+#: as a fraction of one cell. Sources store axes rounded (HYCOM longitude to
+#: about 1e-4 degrees, latitude to float32), so neighbouring steps differ
+#: slightly; cell areas are what matter here, and 1% of a cell is far below
+#: any effect on an area weight.
+POSITION_TOLERANCE = 0.01
+
+
 def _regular_axis(axis: np.ndarray, name: str) -> np.ndarray:
     values = np.asarray(axis, dtype=np.float64)
     if values.ndim != 1 or not bool(np.isfinite(values).all()):
         raise GridValidationError(f"{name} must be a finite coordinate vector")
-    differences = np.diff(values)
-    if (differences.size
-            and (differences[0] == 0.0
-                 or not bool(((differences > 0.0).all()
-                              or (differences < 0.0).all()))
-                 or not np.allclose(
-                     differences, differences[0], rtol=1e-5, atol=1e-10))):
+    if values.size < 2:
+        return values
+    step = (values[-1] - values[0]) / (values.size - 1)
+    ideal = values[0] + step * np.arange(values.size)
+    if step == 0.0 or bool(
+            (np.abs(values - ideal) > abs(step) * POSITION_TOLERANCE).any()):
         raise GridValidationError(
             f"area-weighted slice reduction requires regular {name} spacing")
     return values
