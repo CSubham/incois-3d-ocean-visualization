@@ -8,9 +8,11 @@ from dataclasses import replace
 import pytest
 
 from processing import (
-    AllMissingSubsetError, EmptySubsetError, GridValidationError,
-    InvalidRequestError, JobState, LocalExecutor, ManagedDataUnavailableError,
-    PointBudgetError, ProductRequest, TimeSelectionError, UnknownRequestError,
+    AllMissingObservationError, AllMissingSubsetError, EmptySubsetError,
+    GridValidationError, InvalidRequestError, JobState, LocalExecutor,
+    ManagedDataUnavailableError, ObservationIdentityError,
+    ObservationValidationError, ObservationVariableError, PointBudgetError,
+    ProductRequest, TimeSelectionError, UnknownRequestError,
     VariableSelectionError, WorkLimitError,
 )
 from processing.tests import fixtures
@@ -51,6 +53,10 @@ def test_a_finished_job_can_be_read_back_by_its_identity():
 
 @pytest.mark.parametrize("error, code", [
     (PointBudgetError("x"), "point_budget"),
+    (ObservationIdentityError("x"), "profile_not_found"),
+    (ObservationVariableError("x"), "variable_unavailable"),
+    (ObservationValidationError("x"), "invalid_observation"),
+    (AllMissingObservationError("x"), "all_missing"),
     (InvalidRequestError("x"), "invalid_request"),
     (VariableSelectionError("x"), "variable_unavailable"),
     (TimeSelectionError("x"), "time_unavailable"),

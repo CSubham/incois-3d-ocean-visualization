@@ -10,7 +10,10 @@ from fastapi.testclient import TestClient
 
 from ingestion.query_memory import InMemoryModelFieldQuery
 from ingestion.tests.query_support import PROFILE_VERSION_ID, in_memory_case
-from processing import LocalExecutor
+from processing import (
+    AllMissingObservationError, ObservationIdentityError,
+    ObservationValidationError, ObservationVariableError, LocalExecutor,
+)
 from processing.managed import (
     managed_observation_marker_builder, managed_observation_profile_builder,
 )
@@ -41,6 +44,17 @@ def _client(query=None, maximum_markers=None) -> TestClient:
                                  observations=service))
 
 
+def _failure_client(error: Exception) -> TestClient:
+    def fail(_request):
+        raise error
+
+    service = ObservationService(markers=fail, profiles=fail)
+    executor = LocalExecutor(fixtures.builder(), maximum_points=100,
+                             maximum_cells=1000)
+    return TestClient(create_app(RequestCoordinator(executor),
+                                 observations=service))
+
+
 def test_markers_are_described_then_fetched_as_binary_from_the_same_query():
     client = _client()
     described = client.get(MARKERS, params=SEARCH).json()
@@ -59,6 +73,19 @@ def test_the_same_query_always_yields_the_same_bytes():
     url = client.get(MARKERS, params=SEARCH).json()["data"]["url"]
 
     assert client.get(url).content == client.get(url).content
+
+
+def test_a_valid_marker_search_with_no_profiles_is_an_empty_product():
+    response = _client().get(MARKERS, params={
+        **SEARCH, "west": 0, "east": 1, "south": 0, "north": 1})
+
+    assert response.status_code == 200
+    described = response.json()
+    assert described["observation_count"] == 0
+    assert described["product"]["grouping"]["delivered_marker_count"] == 0
+    data = _client().get(MARKERS + "/data", params={
+        **SEARCH, "west": 0, "east": 1, "south": 0, "north": 1})
+    assert data.status_code == 200
 
 
 def test_an_exact_profile_carries_its_pressure_axis_and_qc():
@@ -84,9 +111,24 @@ def test_marker_failures_carry_codes(change, status, code):
     assert response.json()["detail"]["code"] == code
 
 
+@pytest.mark.parametrize("error, status, code", [
+    (ObservationIdentityError("x"), 404, "profile_not_found"),
+    (ObservationVariableError("x"), 404, "variable_unavailable"),
+    (ObservationValidationError("x"), 422, "invalid_observation"),
+    (AllMissingObservationError("x"), 422, "all_missing"),
+])
+def test_each_typed_observation_failure_has_public_http_semantics(
+        error, status, code):
+    response = _failure_client(error).get(PROFILES, params=PROFILE)
+
+    assert response.status_code == status
+    assert response.json()["detail"] == {"code": code, "message": "x"}
+
+
 def test_an_unknown_profile_is_not_found_and_a_wide_search_is_refused():
     unknown = _client().get(PROFILES, params={**PROFILE, "cycle": "999"})
     assert unknown.status_code == 404
+    assert unknown.json()["detail"]["code"] == "profile_not_found"
 
     capped = _client(maximum_markers=0).get(MARKERS, params=SEARCH)
     assert capped.status_code == 422

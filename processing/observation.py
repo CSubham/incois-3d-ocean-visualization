@@ -145,6 +145,8 @@ class ObservationRecordDescriptor:
     identity: DatasetIdentity
     spatial_reference: SpatialReference
     vertical_kind: str
+    vertical_coordinate: str
+    vertical_units: str
     provenance: Mapping[str, Any]
     sample_dimension: str = "observation_record"
 
@@ -153,6 +155,14 @@ class ObservationRecordDescriptor:
             raise InvalidRequestError(
                 f"vertical kind must be one of {VERTICAL_KINDS}, not "
                 f"{self.vertical_kind!r}")
+        if (not isinstance(self.vertical_coordinate, str)
+                or not self.vertical_coordinate.strip()):
+            raise InvalidRequestError(
+                "an observation-record vertical coordinate is required")
+        if (not isinstance(self.vertical_units, str)
+                or not self.vertical_units.strip()):
+            raise InvalidRequestError(
+                "observation-record vertical units are required")
         if not isinstance(self.sample_dimension, str) \
                 or not self.sample_dimension.strip():
             raise InvalidRequestError(
@@ -266,8 +276,10 @@ class ObservationMarkerProduct:
     product_type: str = field(default=MARKER_PRODUCT_TYPE, init=False)
 
     def __post_init__(self) -> None:
-        if not self.markers:
-            raise ValueError("an observation marker product cannot be empty")
+        if self.grouping.delivered_marker_count != len(self.markers):
+            raise ValueError("delivered marker count must match marker records")
+        if self.grouping.skipped_profile_count != len(self.skipped_profiles):
+            raise ValueError("skipped profile count must match skipped records")
         object.__setattr__(self, "provenance",
                            _frozen_mapping(self.provenance))
 
@@ -806,15 +818,59 @@ def _record_coordinate_metadata(
     )
 
 
+def _empty_record_coordinate_metadata(
+        descriptor: ObservationRecordDescriptor) -> ObservationCoordinateMetadata:
+    """Describe a valid zero-match search without inventing profile values."""
+    return ObservationCoordinateMetadata(
+        names=ObservationCoordinateRoles(
+            platform="platform_id",
+            cycle="cycle",
+            longitude="longitude",
+            latitude="latitude",
+            time="time",
+            vertical=descriptor.vertical_coordinate,
+        ),
+        sample_dimension=descriptor.sample_dimension,
+        units={
+            "platform": None,
+            "cycle": None,
+            "longitude": "degrees_east",
+            "latitude": "degrees_north",
+            "time": None,
+            "vertical": descriptor.vertical_units,
+        },
+        dtypes={name: None for name in (
+            "platform", "cycle", "longitude", "latitude", "time", "vertical")},
+        time_encoding={"units": None, "calendar": None},
+        vertical_kind=descriptor.vertical_kind,
+    )
+
+
 def build_observation_markers_from_records(
         records: tuple[tuple[StoredProfileMarker,
                              StoredObservationProfile], ...],
         descriptor: ObservationRecordDescriptor) -> ObservationMarkerProduct:
     """Build the existing marker envelope from immutable S3 records."""
     if not records:
-        raise ObservationIdentityError(
-            f"no S3 profile markers matched dataset version "
-            f"{descriptor.identity.dataset_version_id!r}")
+        return ObservationMarkerProduct(
+            dataset_identity=descriptor.identity,
+            coordinates=_empty_record_coordinate_metadata(descriptor),
+            spatial_reference=descriptor.spatial_reference,
+            provenance=descriptor.provenance,
+            grouping=MarkerGroupingMetadata(
+                grouping_keys=("platform_id", "cycle"),
+                representative_policy=(
+                    "marker longitude, latitude and time are supplied by the S3 "
+                    "ProfileMarker record; no records matched this search"),
+                original_observation_count=0,
+                delivered_marker_count=0,
+                skipped_profile_count=0,
+            ),
+            markers=(),
+            skipped_profiles=(),
+            coordinate_transform=OBSERVATION_RECORD_TRANSFORM,
+            mask_semantics=OBSERVATION_RECORD_MISSING_MASK,
+        )
 
     markers: list[ObservationMarker] = []
     skipped: list[SkippedObservationProfile] = []

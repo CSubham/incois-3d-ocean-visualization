@@ -85,7 +85,21 @@ def _view(job: ProductJob) -> dict[str, Any]:
 
 
 #: HTTP status for a failed observation product, by failure code.
-_OBSERVATION_STATUS = {"data_unavailable": 404, "internal_error": 500}
+_OBSERVATION_STATUS = {
+    "point_budget": 400,
+    "invalid_request": 400,
+    "profile_not_found": 404,
+    "variable_unavailable": 404,
+    "time_unavailable": 404,
+    "depth_unavailable": 404,
+    "data_unavailable": 404,
+    "unsupported_grid": 422,
+    "empty_subset": 422,
+    "invalid_observation": 422,
+    "all_missing": 422,
+    "work_limit": 422,
+    "internal_error": 500,
+}
 
 
 def create_app(coordinator: RequestCoordinator,
@@ -184,7 +198,7 @@ def create_app(coordinator: RequestCoordinator,
         except ObservationFailed as exc:
             failure = exc.failure
             raise HTTPException(
-                status_code=_OBSERVATION_STATUS.get(failure.code, 422),
+                status_code=_OBSERVATION_STATUS[failure.code],
                 detail={"code": failure.code, "message": failure.message},
             ) from exc
 

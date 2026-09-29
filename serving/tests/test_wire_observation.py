@@ -160,6 +160,8 @@ def test_s3_record_profile_uses_the_same_wire_format_with_absent_dtypes():
         spatial_reference=SpatialReference(
             crs="EPSG:4326", vertical_positive="down"),
         vertical_kind="depth",
+        vertical_coordinate="PRES",
+        vertical_units="decibar",
         provenance={"import_id": PROFILE_VERSION_ID},
     )
     product = managed_observation_profile_builder(

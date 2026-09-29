@@ -8,7 +8,7 @@ from ingestion.query import ProfileIdentity, ProfileSearch
 from ingestion.tests.query_support import PROFILE_VERSION_ID, in_memory_case
 from processing import (
     DatasetIdentity, InvalidRequestError, ManagedDataUnavailableError,
-    WorkLimitError,
+    ObservationIdentityError, WorkLimitError,
     ObservationRecordDescriptor, SpatialReference,
 )
 from processing.managed import (
@@ -24,6 +24,8 @@ def _descriptor() -> ObservationRecordDescriptor:
         spatial_reference=SpatialReference(
             crs="EPSG:4326", vertical_positive="down"),
         vertical_kind="depth",
+        vertical_coordinate="PRES",
+        vertical_units="decibar",
         provenance={
             "import_id": PROFILE_VERSION_ID,
             "source": {"id": "incois_erddap"},
@@ -65,6 +67,24 @@ def test_managed_marker_builder_consumes_only_s3_records(monkeypatch):
     assert "ProfileMarker" in product.grouping.representative_policy
 
 
+def test_a_valid_marker_search_with_no_profiles_returns_an_empty_product():
+    case = in_memory_case()
+    product = managed_observation_marker_builder(case.query)(
+        ManagedObservationMarkerRequest(
+            PROFILE_VERSION_ID,
+            ProfileSearch(
+                west=0.0, east=1.0, south=0.0, north=1.0,
+                time_start="2026-09-27T00:00:00Z",
+                time_end="2026-09-29T00:00:00Z",
+            ),
+        ))
+
+    assert product.markers == ()
+    assert product.grouping.delivered_marker_count == 0
+    assert product.coordinates.names.vertical == "PRES"
+    assert product.coordinates.units["vertical"] == "decibar"
+
+
 def test_managed_profile_builder_preserves_exact_record_values_and_qc():
     case = in_memory_case()
     builder = managed_observation_profile_builder(
@@ -92,12 +112,12 @@ def test_managed_profile_builder_preserves_exact_record_values_and_qc():
     assert product.provenance["import_id"] == PROFILE_VERSION_ID
 
 
-def test_managed_profile_builder_reports_s3_lookup_failure():
+def test_managed_profile_builder_preserves_profile_not_found_semantics():
     case = in_memory_case()
     builder = managed_observation_profile_builder(
         case.query, {PROFILE_VERSION_ID: _descriptor()})
 
-    with pytest.raises(ManagedDataUnavailableError, match="does not exist"):
+    with pytest.raises(ObservationIdentityError, match="does not exist"):
         builder(ManagedObservationProfileRequest(
             identity=ProfileIdentity(
                 PROFILE_VERSION_ID, "7902250", "missing"),
@@ -112,6 +132,8 @@ def test_managed_observation_descriptor_must_match_requested_version():
         spatial_reference=SpatialReference(
             crs="EPSG:4326", vertical_positive="down"),
         vertical_kind="depth",
+        vertical_coordinate="PRES",
+        vertical_units="decibar",
         provenance={"import_id": "wrong-version"},
     )
     builder = managed_observation_marker_builder(

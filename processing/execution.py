@@ -26,10 +26,12 @@ from processing.domain import (
     SamplingRequest, ScalarPointFieldProduct, ScalarSelection,
 )
 from processing.errors import (
-    AllMissingSubsetError, DepthSelectionError, EmptySubsetError,
-    GridValidationError, InvalidRequestError, ManagedDataUnavailableError,
-    PointBudgetError, TimeSelectionError, UnknownRequestError,
-    VariableSelectionError, WorkLimitError,
+    AllMissingObservationError, AllMissingSubsetError, DepthSelectionError,
+    EmptySubsetError, GridValidationError, InvalidRequestError,
+    ManagedDataUnavailableError, ObservationIdentityError,
+    ObservationValidationError, ObservationVariableError, PointBudgetError,
+    TimeSelectionError, UnknownRequestError, VariableSelectionError,
+    WorkLimitError,
 )
 
 log = logging.getLogger(__name__)
@@ -106,6 +108,10 @@ class Failure:
 #: Most specific first: PointBudgetError is an InvalidRequestError.
 _FAILURE_CODES: tuple[tuple[type[Exception], str], ...] = (
     (PointBudgetError, "point_budget"),
+    (ObservationIdentityError, "profile_not_found"),
+    (ObservationVariableError, "variable_unavailable"),
+    (ObservationValidationError, "invalid_observation"),
+    (AllMissingObservationError, "all_missing"),
     (WorkLimitError, "work_limit"),
     (InvalidRequestError, "invalid_request"),
     (VariableSelectionError, "variable_unavailable"),

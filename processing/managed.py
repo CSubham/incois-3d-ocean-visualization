@@ -8,7 +8,7 @@ from typing import Mapping
 from ingestion.query import (
     ModelFieldDescriptor, ModelFieldQuery, ModelFieldQueryError,
     ObservationQuery, ObservationVersionDescriptor, ProfileIdentity,
-    ProfileSearch, VariableUnavailable,
+    ProfileNotFound, ProfileSearch, VariableUnavailable,
 )
 from processing.domain import (
     CoordinateRoles, DatasetIdentity, SamplingRequest, ScalarGridDescriptor,
@@ -19,7 +19,7 @@ from processing.depth_slice import (
 )
 from processing.errors import (
     InvalidRequestError, ManagedDataUnavailableError, VariableSelectionError,
-    WorkLimitError,
+    ObservationIdentityError, WorkLimitError,
 )
 from processing.execution import ProductBuilder, ProductRequest
 from processing.observation import (
@@ -176,6 +176,8 @@ def observation_record_descriptor(
             vertical_positive=descriptor.vertical_positive,
         ),
         vertical_kind=descriptor.vertical_kind,
+        vertical_coordinate=descriptor.vertical_coordinate,
+        vertical_units=descriptor.vertical_units,
         provenance=descriptor.provenance,
     )
 
@@ -248,6 +250,8 @@ def prepare_managed_observation_profile(
         query, descriptors, request.identity.dataset_version_id)
     try:
         profile = query.get_profile(request.identity)
+    except ProfileNotFound as exc:
+        raise ObservationIdentityError(str(exc)) from exc
     except ModelFieldQueryError as exc:
         raise ManagedDataUnavailableError(str(exc)) from exc
     return build_observation_profile_from_record(
