@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from ingestion.composition import build_model_field_query
+from ingestion.composition import build_model_field_query, build_readiness_checks
 from ingestion.config import _seconds
 from ingestion.domain.errors import ConfigurationError
 from ingestion.query import ModelFieldQueryError
@@ -47,3 +47,17 @@ def test_an_unreachable_catalogue_fails_within_the_timeout(tmp_path):
     with pytest.raises(ModelFieldQueryError):
         query.list_model_versions()
     assert time.monotonic() - started < 5
+
+
+def test_the_memory_backend_needs_nothing_to_be_ready():
+    assert build_readiness_checks(environ={"S3_QUERY_BACKEND": "memory"}) == ()
+
+
+def test_readiness_names_what_is_missing_without_connection_detail(monkeypatch, tmp_path):
+    monkeypatch.setattr("ingestion.composition.CATALOGUE_CONNECT_TIMEOUT", 1)
+    checks = dict(build_readiness_checks(environ={
+        "S3_QUERY_BACKEND": "catalogue", "INGESTION_CATALOGUE_DSN": BLACKHOLE,
+        "INGESTION_OBJECT_STORE": str(tmp_path / "absent")}))
+
+    assert checks["catalogue"]() == "the catalogue database could not be reached"
+    assert checks["object_store"]() == "the object store is not accessible"

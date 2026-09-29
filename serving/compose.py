@@ -17,6 +17,7 @@ no storage driver.
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,7 +25,8 @@ from fastapi import FastAPI
 
 from processing import LocalExecutor, ProductBuilder
 from serving.coordinator import RequestCoordinator
-from serving.http import Catalogue, create_app
+from serving.http import Catalogue, ReadinessCheck, create_app
+from serving.observability import configure_logging
 
 if TYPE_CHECKING:
     from serving.observations import ObservationService
@@ -62,7 +64,8 @@ def _web_root() -> Path | None:
 
 def build_app(builder: ProductBuilder,
               catalogue: Catalogue | None = None,
-              observations: ObservationService | None = None) -> FastAPI:
+              observations: ObservationService | None = None,
+              readiness: Sequence[ReadinessCheck] = ()) -> FastAPI:
     executor = LocalExecutor(
         builder,
         maximum_points=_positive_int("SERVING_MAX_POINTS",
@@ -72,18 +75,22 @@ def build_app(builder: ProductBuilder,
         retained_jobs=_positive_int("SERVING_RETAINED_JOBS", 256),
     )
     return create_app(RequestCoordinator(executor), catalogue, _web_root(),
-                      observations)
+                      observations, readiness)
 
 
 def create_default_app() -> FastAPI:
     """The deployable app: product builder and catalogue over S3 reads."""
-    from ingestion.composition import build_model_field_query
+    from ingestion.composition import (
+        build_model_field_query, build_readiness_checks,
+    )
     from processing.managed import (
         managed_observation_marker_builder, managed_observation_profile_builder,
         managed_point_field_builder,
     )
     from serving.observations import ObservationService
 
+    configure_logging(os.environ.get("LOG_LEVEL", "INFO"),
+                      os.environ.get("LOG_FORMAT", "json"))
     query = build_model_field_query()
     observations = ObservationService(
         markers=managed_observation_marker_builder(
@@ -92,4 +99,5 @@ def create_default_app() -> FastAPI:
         profiles=managed_observation_profile_builder(query),
     )
     return build_app(managed_point_field_builder(query), catalogue=query,
-                     observations=observations)
+                     observations=observations,
+                     readiness=build_readiness_checks())

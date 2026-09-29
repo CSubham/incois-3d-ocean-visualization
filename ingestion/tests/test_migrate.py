@@ -129,3 +129,17 @@ def test_a_failing_migration_leaves_the_catalogue_unchanged(tmp_path):
         tables = {r[0] for r in connection.execute(
             "SELECT tablename FROM pg_tables WHERE schemaname = 'public'")}
     assert "good" not in tables and "schema_migration" not in tables
+
+
+def test_readiness_follows_the_catalogue_schema(tmp_path):
+    from ingestion.composition import build_readiness_checks
+
+    dsn = _live_dsn()
+    checks = dict(build_readiness_checks(environ={
+        "S3_QUERY_BACKEND": "catalogue", "INGESTION_CATALOGUE_DSN": dsn,
+        "INGESTION_OBJECT_STORE": str(tmp_path)}))
+
+    assert checks["catalogue"]() == "the catalogue has no migrations applied"
+    migrate(dsn)
+    assert checks["catalogue"]() is None
+    assert checks["object_store"]() is None

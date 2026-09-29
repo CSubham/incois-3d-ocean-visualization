@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from pathlib import Path
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Protocol
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict
 
 from processing import JobState, ProductJob
 from serving import wire, wire_observation
+from serving.observability import RequestContext
 from serving.observations import (
     MarkerIntent, ObservationFailed, ObservationService, ProfileIntent,
 )
@@ -49,6 +50,10 @@ class Catalogue(Protocol):
     def list_model_versions(self) -> Listing: ...
 
     def list_observation_versions(self) -> Listing: ...
+
+
+#: A named readiness probe: returns None when ready, else why not.
+ReadinessCheck = tuple[str, Callable[[], str | None]]
 
 
 class Strict(BaseModel):
@@ -117,14 +122,35 @@ _OBSERVATION_STATUS = {
 def create_app(coordinator: RequestCoordinator,
                catalogue: Catalogue | None = None,
                web_root: Path | None = None,
-               observations: ObservationService | None = None) -> FastAPI:
+               observations: ObservationService | None = None,
+               readiness: Sequence[ReadinessCheck] = ()) -> FastAPI:
     """The HTTP surface. ``web_root``, when given, serves the browser app
-    from the same origin, so no cross-origin access is ever opened."""
+    from the same origin, so no cross-origin access is ever opened.
+    ``readiness`` names the dependencies that must answer before traffic
+    is routed here."""
     app = FastAPI(title="Ocean data serving", version="1.0")
+    app.add_middleware(RequestContext)
 
     @app.get("/health")
+    @app.get("/health/live")
     def health() -> dict[str, str]:
+        """The process answers; says nothing about its dependencies."""
         return {"status": "ok", "stage": "S5"}
+
+    @app.get("/health/ready")
+    def ready() -> JSONResponse:
+        """Every dependency answers and the catalogue schema matches."""
+        checks: dict[str, dict[str, Any]] = {}
+        for name, check in readiness:
+            try:
+                reason = check()
+            except Exception:
+                log.exception("readiness check %s failed", name)
+                reason = "the check itself failed"
+            checks[name] = {"ready": reason is None, "reason": reason}
+        is_ready = all(item["ready"] for item in checks.values())
+        return JSONResponse(status_code=200 if is_ready else 503, content={
+            "status": "ready" if is_ready else "unready", "checks": checks})
 
     @app.get(f"{API}/capabilities")
     def capabilities() -> dict[str, Any]:
