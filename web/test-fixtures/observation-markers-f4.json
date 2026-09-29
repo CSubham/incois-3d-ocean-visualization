@@ -1,0 +1,231 @@
+{
+  "data": {
+    "arrays": [
+      {
+        "byte_length": 8,
+        "byte_offset": 0,
+        "count": 2,
+        "dtype": "<f4",
+        "name": "longitude",
+        "role": "longitude"
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 8,
+        "count": 2,
+        "dtype": "<f4",
+        "name": "latitude",
+        "role": "latitude"
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 16,
+        "count": 2,
+        "dtype": "<f4",
+        "name": "vertical_minimum",
+        "role": "vertical_range_minimum"
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 24,
+        "count": 2,
+        "dtype": "<f4",
+        "name": "vertical_maximum",
+        "role": "vertical_range_maximum"
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 32,
+        "count": 2,
+        "dtype": "<u4",
+        "name": "vertical_valid_count",
+        "role": "vertical_valid_observation_count"
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 40,
+        "count": 2,
+        "dtype": "<u4",
+        "name": "vertical_missing_count",
+        "role": "vertical_missing_observation_count"
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 48,
+        "count": 2,
+        "dtype": "<u4",
+        "name": "representative_source_index",
+        "role": "representative_source_index"
+      },
+      {
+        "byte_length": 12,
+        "byte_offset": 56,
+        "component": "offsets",
+        "count": 3,
+        "dtype": "<u4",
+        "encoding": "utf-8-offsets",
+        "name": "platform_id_offsets",
+        "role": "platform_identity",
+        "text_column": "platform_id",
+        "value_count": 2
+      },
+      {
+        "byte_length": 8,
+        "byte_offset": 72,
+        "component": "utf8",
+        "count": 8,
+        "dtype": "|u1",
+        "encoding": "utf-8-offsets",
+        "name": "platform_id_utf8",
+        "role": "platform_identity",
+        "text_column": "platform_id",
+        "value_count": 2
+      },
+      {
+        "byte_length": 12,
+        "byte_offset": 80,
+        "component": "offsets",
+        "count": 3,
+        "dtype": "<u4",
+        "encoding": "utf-8-offsets",
+        "name": "cycle_offsets",
+        "role": "cycle_profile_identity",
+        "text_column": "cycle",
+        "value_count": 2
+      },
+      {
+        "byte_length": 2,
+        "byte_offset": 96,
+        "component": "utf8",
+        "count": 2,
+        "dtype": "|u1",
+        "encoding": "utf-8-offsets",
+        "name": "cycle_utf8",
+        "role": "cycle_profile_identity",
+        "text_column": "cycle",
+        "value_count": 2
+      },
+      {
+        "byte_length": 12,
+        "byte_offset": 104,
+        "component": "offsets",
+        "count": 3,
+        "dtype": "<u4",
+        "encoding": "utf-8-offsets",
+        "name": "time_offsets",
+        "role": "timestamp",
+        "source_dtype": "datetime64[ns]",
+        "text_column": "time",
+        "value_count": 2
+      },
+      {
+        "byte_length": 26,
+        "byte_offset": 120,
+        "component": "utf8",
+        "count": 26,
+        "dtype": "|u1",
+        "encoding": "utf-8-offsets",
+        "name": "time_utf8",
+        "role": "timestamp",
+        "source_dtype": "datetime64[ns]",
+        "text_column": "time",
+        "value_count": 2
+      },
+      {
+        "byte_length": 12,
+        "byte_offset": 152,
+        "count": 3,
+        "dtype": "<u4",
+        "name": "marker_source_index_offsets",
+        "role": "marker_source_index_offsets",
+        "value_count": 2
+      },
+      {
+        "byte_length": 28,
+        "byte_offset": 168,
+        "count": 7,
+        "dtype": "<u4",
+        "name": "marker_source_index",
+        "role": "source_observation_index"
+      }
+    ],
+    "byte_length": 196,
+    "byte_order": "little",
+    "media_type": "application/octet-stream",
+    "url": "/data"
+  },
+  "observation_count": 2,
+  "product": {
+    "coordinate_transform": {
+      "horizontal": "source longitude and latitude in the declared CRS; not averaged, reprojected or re-wrapped",
+      "kind": "identity",
+      "vertical": "source vertical values in source units and declared positive direction; not converted, sorted or interpolated"
+    },
+    "coordinates": {
+      "dtypes": {
+        "cycle": "object",
+        "latitude": "float32",
+        "longitude": "float32",
+        "platform": "object",
+        "time": "datetime64[ns]",
+        "vertical": "float32"
+      },
+      "names": {
+        "cycle": "CYCLE_NUMBER",
+        "latitude": "LATITUDE",
+        "longitude": "LONGITUDE",
+        "platform": "PLATFORM_NUMBER",
+        "time": "JULD",
+        "vertical": "PRES"
+      },
+      "sample_dimension": "observation",
+      "time_encoding": {
+        "calendar": null,
+        "units": null
+      },
+      "units": {
+        "cycle": null,
+        "latitude": "degrees_north",
+        "longitude": "degrees_east",
+        "platform": null,
+        "time": null,
+        "vertical": "dbar"
+      },
+      "vertical_kind": "pressure"
+    },
+    "dataset_identity": {
+      "dataset_id": "Indian_ARGO_Floats",
+      "dataset_version_id": "import-argo-1"
+    },
+    "grouping": {
+      "delivered_marker_count": 2,
+      "grouping_keys": [
+        "PLATFORM_NUMBER",
+        "CYCLE_NUMBER"
+      ],
+      "original_observation_count": 7,
+      "representative_policy": "first source row in dataset order with non-missing longitude, latitude and time; no coordinate averaging",
+      "skipped_profile_count": 0
+    },
+    "mask_semantics": {
+      "masked_values": "not scientific values; consumers must apply the mask",
+      "sources": [
+        "NaN or NaT after decoding",
+        "masked array element"
+      ],
+      "true_means": "the source observation has no decoded value"
+    },
+    "product_type": "observation_markers",
+    "provenance": {
+      "import_id": "import-argo-1",
+      "source": "INCOIS ERDDAP"
+    },
+    "schema_version": "s4.observation-markers/1.0",
+    "skipped_profiles": [],
+    "spatial_reference": {
+      "crs": "EPSG:4326",
+      "vertical_positive": "down"
+    }
+  },
+  "wire_format": "s5.observation-wire/1.0"
+}

@@ -29,6 +29,28 @@ describe("decodeMarkers", () => {
     expect(Array.from(markers.verticalMaximum)).toEqual([10]);
   });
 
+  it("carries the markers' coordinate reference", () => {
+    expect(decodeMarkers(descriptor, buffer).crs).toBe("EPSG:4326");
+  });
+
+  it("accepts source-preserved float32 markers exactly as S5 declares them", () => {
+    const f4 = JSON.parse(readFileSync(new URL("observation-markers-f4.json", fixture), "utf8")) as MarkerDescriptor;
+    const raw = readFileSync(new URL("observation-markers-f4.bin", fixture));
+    const markers = decodeMarkers(f4, raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer);
+    expect(markers.platformIds).toEqual(["5901", "5902"]);
+    expect(markers.cycles).toEqual(["7", "8"]);
+    expect(markers.longitude).toBeInstanceOf(Float32Array);
+    // Not widened or narrowed: the float32 value S5 sent, bit for bit.
+    expect(markers.longitude[1]).toBe(Math.fround(82.1));
+    expect(markers.latitude[0]).toBe(-4);
+  });
+
+  it("refuses integer marker coordinates", () => {
+    const tampered = structuredClone(descriptor);
+    tampered.data.arrays.find((a) => a.name === "longitude")!.dtype = "<i4";
+    expect(() => decodeMarkers(tampered, buffer)).toThrow(/floating point/);
+  });
+
   it("refuses a truncated buffer or an unknown format", () => {
     expect(() => decodeMarkers(descriptor, buffer.slice(8))).toThrow(WireError);
     expect(() => decodeMarkers({ ...descriptor, wire_format: "other/1" }, buffer)).toThrow(WireError);

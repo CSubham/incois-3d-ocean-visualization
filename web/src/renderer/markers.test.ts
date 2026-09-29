@@ -4,7 +4,7 @@ import type { MarkerSet } from "../api/observationWire";
 import { markerPick } from "./markers";
 
 const set: MarkerSet = {
-  datasetVersionId: "v-argo", verticalKind: "pressure", verticalUnits: "decibar",
+  datasetVersionId: "v-argo", crs: "EPSG:4326", verticalKind: "pressure", verticalUnits: "decibar",
   longitude: new Float64Array([73.5, 80.1]), latitude: new Float64Array([8.5, 12.2]),
   verticalMinimum: new Float64Array([2, 1]), verticalMaximum: new Float64Array([10, 2000]),
   platformIds: ["7902250", "5907085"], cycles: ["12", "32"],

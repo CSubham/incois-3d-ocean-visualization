@@ -39,14 +39,22 @@ export function App({ client, createRenderer }: Props) {
     dispatch({ type: "requestStarted", retryFrom });
     try {
       const view = await client.pointField(intentFor(selection), controller.signal);
-      if (view.state === "succeeded" && view.product) {
-        const buffer = await client.productData(view.product.data.url, controller.signal);
-        const arrays = decodePointField(view.product, buffer);
-        if (controller.signal.aborted) return;
+      if (view.state !== "succeeded" || !view.product) {
         dispatch({ type: "requestFinished", view });
-        renderer.showPointField(view.product, arrays);
+        return;
+      }
+      const buffer = await client.productData(view.product.data.url, controller.signal);
+      const arrays = decodePointField(view.product, buffer);
+      if (controller.signal.aborted) return;
+      // The product becomes the shown one only once the renderer has drawn it.
+      const outcome = renderer.showPointField(view.product, arrays);
+      if (outcome.status === "shown") {
+        dispatch({ type: "productShown", view, shownPoints: outcome.shownPoints, hiddenMissingPoints: outcome.hiddenMissingPoints });
+      } else if (outcome.status === "too-large") {
+        dispatch({ type: "productTooLarge", retryWithPoints: outcome.retryWithPoints });
+        void loadRef.current?.({ ...selection, maximumPoints: outcome.retryWithPoints }, selection.maximumPoints);
       } else {
-        dispatch({ type: "requestFinished", view });
+        dispatch({ type: "productRefused", reason: outcome.reason });
       }
     } catch (error) {
       if (controller.signal.aborted) return;
@@ -58,17 +66,11 @@ export function App({ client, createRenderer }: Props) {
       dispatch({ type: "requestFailed", failure });
     }
   }, [client, renderer]);
+  const loadRef = useRef(load);
+  loadRef.current = load;
 
-  const selectionRef = useRef<Selection | null>(null);
-  selectionRef.current = state.selection;
   useEffect(() => {
-    const unsubscribe = renderer.onEvent((event) => {
-      dispatch({ type: "rendererEvent", event });
-      const selection = selectionRef.current;
-      if (event.type === "resource" && selection) {
-        void load({ ...selection, maximumPoints: event.retryWithPoints }, selection.maximumPoints);
-      }
-    });
+    const unsubscribe = renderer.onEvent((event) => dispatch({ type: "rendererEvent", event }));
     if (globeRef.current) renderer.mount(globeRef.current);
     return () => {
       unsubscribe();
@@ -88,8 +90,11 @@ export function App({ client, createRenderer }: Props) {
     return () => controller.abort();
   }, [client]);
 
-  // Display state is declarative: every change is simply re-applied.
-  useEffect(() => { renderer.applyDisplay(state.display); }, [renderer, state.display]);
+  // Display state is declarative: every change is re-applied, and a refusal
+  // (the view is left unchanged) is reported rather than hidden.
+  useEffect(() => {
+    dispatch({ type: "displayOutcome", outcome: renderer.applyDisplay(state.display) });
+  }, [renderer, state.display]);
 
   const version = state.catalogue.versions.find((v) => v.id === state.selection?.versionId);
   const units = state.product?.product.variable_units
@@ -138,7 +143,8 @@ export function App({ client, createRenderer }: Props) {
       <AppShell.Main style={{ position: "relative", height: "calc(100dvh - 52px)" }}>
         <div className="globe" ref={globeRef} aria-label="3D globe view" />
         <div className="overlay top">
-          <StatusBanner catalogue={state.catalogue} request={state.request} renderer={state.renderer} hasProduct={state.product !== null} />
+          <StatusBanner catalogue={state.catalogue} request={state.request} renderer={state.renderer}
+            displayProblem={state.displayProblem} hasProduct={state.product !== null} />
         </div>
         {state.hovered && state.product && (
           <div className="overlay top-right">

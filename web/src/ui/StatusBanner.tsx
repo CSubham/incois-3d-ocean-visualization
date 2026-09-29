@@ -9,12 +9,15 @@ interface Props {
   catalogue: State["catalogue"];
   request: State["request"];
   renderer: State["renderer"];
+  displayProblem: string | null;
   hasProduct: boolean;
 }
 
-export function StatusBanner({ catalogue, request, renderer, hasProduct }: Props) {
+export function StatusBanner({ catalogue, request, renderer, displayProblem, hasProduct }: Props) {
   if (renderer.phase === "unsupported") return <Alert color="red" title="3D view unavailable" role="alert">{renderer.reason}</Alert>;
-  if (renderer.phase === "error") return <Alert color="red" title="Display problem" role="alert">{renderer.reason}</Alert>;
+  if (renderer.phase === "lost") return <Alert color="red" title="3D view stopped" role="alert">{renderer.reason}</Alert>;
+  if (renderer.phase === "failed") return <Alert color="red" title="Display problem" role="alert">{renderer.reason}</Alert>;
+  if (displayProblem) return <Alert color="yellow" title="Display setting not applied" role="alert">{displayProblem}</Alert>;
   if (request.phase === "loading") {
     return (
       <Paper px="md" py={8} withBorder shadow="md" role="status">

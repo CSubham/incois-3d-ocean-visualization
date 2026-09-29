@@ -6,8 +6,11 @@
 // geodetically at its own longitude and latitude, with height equal to the
 // exaggerated depth below the ellipsoid; a flat local frame would drift tens
 // of kilometres off the curved surface across a regional selection.
-// Exaggeration and colour are display state only: physical values are kept
-// untouched and positions are recomputed from them.
+// Exaggeration and colour are display state only: physical values are read
+// from the decoded product itself and positions are recomputed from them.
+//
+// Every product is validated before the current layer is touched, so a
+// refusal leaves the previous field displayed exactly as S7 still describes it.
 
 import {
   BoundingSphere, buildModuleUrl, Cartesian3, Color, GridImageryProvider,
@@ -18,14 +21,14 @@ import {
 import "cesium/Build/Cesium/Widgets/widgets.css";
 
 import type { MarkerSet } from "../../api/observationWire";
-import type { PointFieldArrays, ProductDescriptor } from "../../api/wire";
+import type { NumericArray, PointFieldArrays, ProductDescriptor } from "../../api/wire";
 import { logScaleProblem, normalise, paletteColour } from "../colour";
 import type {
-  DisplayState, PointSample, Renderer, RendererCapabilities, RendererCommand,
-  RendererEvent,
+  DisplayOutcome, DisplayState, FieldOutcome, MarkerOutcome, PointSample,
+  Renderer, RendererCapabilities, RendererCommand, RendererEvent,
 } from "../contract";
 import { markerPick } from "../markers";
-import { sceneFrame, TransformError } from "../transform";
+import { isGeographicCrs, sceneFrame, TransformError } from "../transform";
 
 const POINT_PIXELS = 4;
 const MARKER_PIXELS = 11;
@@ -35,12 +38,12 @@ const REGION_OUTLINE = Color.fromCssColorString("#9fd3ea").withAlpha(0.9);
 interface Layer {
   collection: PointPrimitiveCollection;
   points: PointPrimitive[];
-  longitude: Float64Array;
-  latitude: Float64Array;
+  /** The decoded product arrays; values are read from here at full precision. */
+  source: PointFieldArrays;
+  /** Source index of each drawn point. */
+  index: Uint32Array;
   /** Metres above the ellipsoid before exaggeration; negative below it. */
   height: Float64Array;
-  depth: Float64Array;
-  values: Float32Array;
   bounds: { west: number; east: number; south: number; north: number };
   deepest: number;
   outline: Entity[];
@@ -84,12 +87,14 @@ export class CesiumRenderer implements Renderer {
     scene.globe.undergroundColor = Color.fromCssColorString("#07131f");
     scene.globe.translucency.frontFaceAlpha = 0.35;
     scene.screenSpaceCameraController.enableCollisionDetection = false;
-    scene.renderError.addEventListener((_scene, error) => {
-      this.emit({ type: "error", reason: `the globe stopped rendering: ${String(error)}` });
+    scene.renderError.addEventListener((_scene: unknown, error: unknown) => {
+      this.emit({ type: "renderFailed", reason: `the globe stopped rendering: ${String(error)}` });
     });
-    scene.canvas.addEventListener("webglcontextlost", (event) => {
+    // CesiumJS does not rebuild its GPU resources after a context loss, so the
+    // loss is reported as permanent rather than as a recoverable error.
+    scene.canvas.addEventListener("webglcontextlost", (event: Event) => {
       event.preventDefault();
-      this.emit({ type: "error", reason: "the graphics context was lost; reload to restore the view" });
+      this.emit({ type: "contextLost", reason: "the graphics context was lost; reload the page to restore the view" });
     });
     this.handler = new ScreenSpaceEventHandler(scene.canvas);
     this.handler.setInputAction((movement: { endPosition: Cartesian2 }) => this.hover(movement.endPosition),
@@ -100,16 +105,15 @@ export class CesiumRenderer implements Renderer {
     this.viewer.camera.setView({ destination: Cartesian3.fromDegrees(78, 5, 9_000_000) });
   }
 
-  showPointField(descriptor: ProductDescriptor, arrays: PointFieldArrays): void {
+  showPointField(descriptor: ProductDescriptor, arrays: PointFieldArrays): FieldOutcome {
     const viewer = this.viewer;
-    if (!viewer) return;
+    if (!viewer) return { status: "refused", reason: "the 3D view is not available" };
     if (descriptor.point_count > this.capabilities.maximumPoints) {
-      this.emit({
-        type: "resource",
+      return {
+        status: "too-large",
         reason: `${descriptor.point_count} points exceed this view's limit of ${this.capabilities.maximumPoints}`,
         retryWithPoints: this.capabilities.maximumPoints,
-      });
-      return;
+      };
     }
     const product = descriptor.product;
     const bounds = extent(arrays.longitude, arrays.latitude);
@@ -118,29 +122,22 @@ export class CesiumRenderer implements Renderer {
       frame = sceneFrame(product.spatial_reference.crs, product.coordinates.units.depth,
         product.spatial_reference.vertical_positive, bounds);
     } catch (error) {
-      if (error instanceof TransformError) {
-        this.emit({ type: "unsupported", reason: error.message });
-        return;
-      }
+      if (error instanceof TransformError) return { status: "refused", reason: error.message };
       throw error;
     }
 
+    // Valid from here on: only now is the previous field replaced.
     this.clear();
     const count = arrays.values.length;
-    const longitude = new Float64Array(count), latitude = new Float64Array(count);
-    const height = new Float64Array(count), depth = new Float64Array(count);
-    const values = new Float32Array(count);
+    const index = new Uint32Array(count);
+    const height = new Float64Array(count);
     const heightPerDepthUnit = -frame.depthSign * frame.depthToKm * 1000;
     let shown = 0;
     let deepest = 0;
     for (let i = 0; i < count; i++) {
-      const value = arrays.values[i];
-      if (arrays.missingValueMask[i] || !Number.isFinite(value)) continue;
-      longitude[shown] = arrays.longitude[i];
-      latitude[shown] = arrays.latitude[i];
-      depth[shown] = arrays.depth[i];
+      if (arrays.missingValueMask[i] || !Number.isFinite(arrays.values[i])) continue;
+      index[shown] = i;
       height[shown] = arrays.depth[i] * heightPerDepthUnit;
-      values[shown] = value;
       deepest = Math.min(deepest, height[shown]);
       shown++;
     }
@@ -148,19 +145,18 @@ export class CesiumRenderer implements Renderer {
     const collection = viewer.scene.primitives.add(new PointPrimitiveCollection()) as PointPrimitiveCollection;
     const exaggeration = this.display?.verticalExaggeration ?? 1;
     const points: PointPrimitive[] = new Array(shown);
-    for (let i = 0; i < shown; i++) {
-      points[i] = collection.add({
-        position: Cartesian3.fromDegrees(longitude[i], latitude[i], height[i] * exaggeration),
+    for (let k = 0; k < shown; k++) {
+      const i = index[k];
+      points[k] = collection.add({
+        position: Cartesian3.fromDegrees(arrays.longitude[i], arrays.latitude[i], height[k] * exaggeration),
         pixelSize: POINT_PIXELS,
         color: Color.GRAY,
-        id: i,
+        id: k,
       });
     }
     this.layer = {
       collection, points, bounds, deepest, coloured: false, outline: [],
-      longitude: longitude.subarray(0, shown), latitude: latitude.subarray(0, shown),
-      height: height.subarray(0, shown), depth: depth.subarray(0, shown),
-      values: values.subarray(0, shown),
+      source: arrays, index: index.subarray(0, shown), height: height.subarray(0, shown),
     };
     viewer.scene.globe.translucency.rectangle = Rectangle.fromDegrees(
       bounds.west, bounds.south, bounds.east, bounds.north);
@@ -168,7 +164,7 @@ export class CesiumRenderer implements Renderer {
     this.drawOutline(exaggeration);
     if (this.display) this.applyDisplay(this.display);
     this.flyToRegion();
-    this.emit({ type: "ready", shownPoints: shown, hiddenMissingPoints: count - shown });
+    return { status: "shown", shownPoints: shown, hiddenMissingPoints: count - shown };
   }
 
   clear(): void {
@@ -183,9 +179,12 @@ export class CesiumRenderer implements Renderer {
     viewer.scene.requestRender();
   }
 
-  showMarkers(set: MarkerSet): void {
+  showMarkers(set: MarkerSet): MarkerOutcome {
     const viewer = this.viewer;
-    if (!viewer) return;
+    if (!viewer) return { status: "refused", reason: "the 3D view is not available" };
+    if (!isGeographicCrs(set.crs)) {
+      return { status: "refused", reason: `marker coordinate reference system ${set.crs} is not supported by this view` };
+    }
     this.clearMarkers();
     const collection = viewer.scene.primitives.add(new PointPrimitiveCollection()) as PointPrimitiveCollection;
     for (let i = 0; i < set.platformIds.length; i++) {
@@ -202,7 +201,7 @@ export class CesiumRenderer implements Renderer {
     }
     this.markers = { collection, set };
     viewer.scene.requestRender();
-    this.emit({ type: "markersReady", count: set.platformIds.length });
+    return { status: "shown", count: set.platformIds.length };
   }
 
   clearMarkers(): void {
@@ -214,37 +213,39 @@ export class CesiumRenderer implements Renderer {
     viewer.scene.requestRender();
   }
 
-  applyDisplay(display: DisplayState): void {
+  applyDisplay(display: DisplayState): DisplayOutcome {
+    const { minimum, maximum } = display.range;
+    const problem = display.scale === "log" ? logScaleProblem(minimum, maximum) : null;
+    if (problem) return { status: "refused", reason: problem };   // nothing changed
+
     const previous = this.display;
     this.display = display;
     const layer = this.layer;
-    if (!layer || !this.viewer) return;
+    if (!layer || !this.viewer) return { status: "applied" };
 
+    const { source, index } = layer;
     if (!previous || previous.verticalExaggeration !== display.verticalExaggeration) {
       const e = display.verticalExaggeration;
-      for (let i = 0; i < layer.points.length; i++) {
-        layer.points[i].position = Cartesian3.fromDegrees(layer.longitude[i], layer.latitude[i], layer.height[i] * e);
+      for (let k = 0; k < layer.points.length; k++) {
+        const i = index[k];
+        layer.points[k].position = Cartesian3.fromDegrees(source.longitude[i], source.latitude[i], layer.height[k] * e);
       }
       this.drawOutline(e);
     }
 
     const recolour = !layer.coloured || !previous || previous.palette !== display.palette ||
       previous.scale !== display.scale || previous.opacity !== display.opacity ||
-      previous.range.minimum !== display.range.minimum || previous.range.maximum !== display.range.maximum;
+      previous.range.minimum !== minimum || previous.range.maximum !== maximum;
     if (recolour) {
-      const { minimum, maximum } = display.range;
-      const problem = display.scale === "log" ? logScaleProblem(minimum, maximum) : null;
-      if (problem) {
-        this.emit({ type: "error", reason: problem });
-      } else {
-        for (let i = 0; i < layer.points.length; i++) {
-          const [r, g, b] = paletteColour(display.palette, normalise(layer.values[i], minimum, maximum, display.scale));
-          layer.points[i].color = new Color(r, g, b, display.opacity);
-        }
-        layer.coloured = true;
+      for (let k = 0; k < layer.points.length; k++) {
+        const [r, g, b] = paletteColour(display.palette,
+          normalise(source.values[index[k]], minimum, maximum, display.scale));
+        layer.points[k].color = new Color(r, g, b, display.opacity);
       }
+      layer.coloured = true;
     }
     this.viewer.scene.requestRender();
+    return { status: "applied" };
   }
 
   command(command: RendererCommand): void {
@@ -258,10 +259,10 @@ export class CesiumRenderer implements Renderer {
 
   dispose(): void {
     this.clearMarkers();
+    this.clear();
     this.handler?.destroy();
     if (this.viewer && !this.viewer.isDestroyed()) this.viewer.destroy();
     this.viewer = undefined;
-    this.layer = undefined;
     this.listeners.clear();
   }
 
@@ -322,17 +323,19 @@ export class CesiumRenderer implements Renderer {
     const layer = this.layer;
     if (!viewer || !layer) return;
     const picked = viewer.scene.pick(position);
-    const index = picked?.collection === layer.collection && typeof picked.id === "number" ? picked.id : null;
-    this.setHovered(index);
+    const point = picked?.collection === layer.collection && typeof picked.id === "number" ? picked.id : null;
+    this.setHovered(point);
   }
 
-  private setHovered(index: number | null): void {
-    if (index === this.hovered) return;
-    this.hovered = index;
+  private setHovered(point: number | null): void {
+    if (point === this.hovered) return;
+    this.hovered = point;
     const layer = this.layer;
     let sample: PointSample | null = null;
-    if (index !== null && layer) {
-      sample = { longitude: layer.longitude[index], latitude: layer.latitude[index], depth: layer.depth[index], value: layer.values[index] };
+    if (point !== null && layer) {
+      const i = layer.index[point];
+      const { source } = layer;
+      sample = { longitude: source.longitude[i], latitude: source.latitude[i], depth: source.depth[i], value: source.values[i] };
     }
     this.emit({ type: "hover", sample });
   }
@@ -342,7 +345,7 @@ export class CesiumRenderer implements Renderer {
   }
 }
 
-function extent(longitude: ArrayLike<number>, latitude: ArrayLike<number>) {
+function extent(longitude: NumericArray, latitude: NumericArray) {
   let west = Infinity, east = -Infinity, south = Infinity, north = -Infinity;
   for (let i = 0; i < longitude.length; i++) {
     west = Math.min(west, longitude[i]); east = Math.max(east, longitude[i]);

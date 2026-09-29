@@ -2,12 +2,13 @@
 //
 // Selection changes produce a data request (handled outside the reducer);
 // display changes are applied to the renderer as declarative state and never
-// cause reprocessing.
+// cause reprocessing. A product becomes the shown product only when the
+// renderer reports it shown, so state always describes what is on screen.
 
 import type { Budget, CatalogueVersion, Failure, RequestView } from "../api/client";
 import type { ProductDescriptor } from "../api/wire";
-import type { DisplayState, PointSample, RendererEvent } from "../renderer/contract";
-import { suggestedExaggeration } from "../renderer/transform";
+import type { DisplayOutcome, DisplayState, PointSample, RendererEvent } from "../renderer/contract";
+import { depthUnitsToKm, suggestedExaggeration } from "../renderer/transform";
 
 export interface Selection {
   versionId: string;
@@ -41,7 +42,10 @@ export interface State {
   shown: { points: number; hiddenMissing: number } | null;
   hovered: PointSample | null;
   display: Display;
-  renderer: { phase: "ok" | "unsupported" | "error"; reason?: string };
+  /** Why the last display change was not applied; the view is unchanged. */
+  displayProblem: string | null;
+  /** "unsupported" and "lost" are permanent; "failed" clears when a field is shown. */
+  renderer: { phase: "ok" | "unsupported" | "lost" | "failed"; reason?: string };
   rendererMaximumPoints: number;
 }
 
@@ -51,8 +55,16 @@ export type Action =
   | { type: "selectVersion"; versionId: string }
   | { type: "editSelection"; patch: Partial<Omit<Selection, "versionId">> }
   | { type: "requestStarted"; retryFrom?: number }
+  /** A request that ended without a product to show. */
   | { type: "requestFinished"; view: RequestView }
   | { type: "requestFailed"; failure: Failure }
+  /** The renderer drew this product; it is now the shown product. */
+  | { type: "productShown"; view: RequestView; shownPoints: number; hiddenMissingPoints: number }
+  /** The renderer refused the product; the previous one is still shown. */
+  | { type: "productRefused"; reason: string }
+  /** The renderer asks for a lower point budget; the controller re-requests. */
+  | { type: "productTooLarge"; retryWithPoints: number }
+  | { type: "displayOutcome"; outcome: DisplayOutcome }
   | { type: "rendererEvent"; event: RendererEvent }
   | { type: "setDisplay"; patch: Partial<Omit<Display, "rangeSource" | "exaggerationSource">> }
   | { type: "useFullSubsetRange" };
@@ -69,6 +81,7 @@ export function initialState(rendererMaximumPoints: number): State {
     lowerDensityRetry: null,
     shown: null,
     hovered: null,
+    displayProblem: null,
     display: {
       palette: "thermal", range: { minimum: 0, maximum: 1 }, scale: "linear",
       opacity: 1, verticalExaggeration: 100,
@@ -91,11 +104,15 @@ export function defaultSelection(version: CatalogueVersion, maximumPoints: numbe
   };
 }
 
-function suggestedFor(selection: Selection): number {
+/** A readable exaggeration, from the product's declared depth units; null
+ *  when the units are unknown, so no unit is assumed. */
+function suggestedFor(selection: Selection, depthUnits: string | null | undefined): number | null {
+  const kmPerUnit = depthUnitsToKm(depthUnits);
+  if (kmPerUnit === undefined) return null;
   const midLatitude = ((selection.south + selection.north) / 2) * Math.PI / 180;
   const widthKm = Math.abs(selection.east - selection.west) * 111.32 * Math.cos(midLatitude);
   const lengthKm = Math.abs(selection.north - selection.south) * 110.574;
-  const depthKm = Math.abs(selection.depthMaximum - selection.depthMinimum) / 1000;
+  const depthKm = Math.abs(selection.depthMaximum - selection.depthMinimum) * kmPerUnit;
   return suggestedExaggeration(Math.max(widthKm, lengthKm), depthKm);
 }
 
@@ -137,40 +154,67 @@ export function reducer(state: State, action: Action): State {
       };
     case "requestFinished": {
       const { view } = action;
-      if (view.state === "failed" || !view.product) {
-        return {
-          ...state,
-          request: { phase: "failed", failure: view.failure ?? { code: "unknown", message: "no product was returned" } },
-          budget: view.budget,
-        };
-      }
-      const range = view.product.product.full_subset_range;
+      return {
+        ...state,
+        request: { phase: "failed", failure: view.failure ?? { code: "unknown", message: "no product was returned" } },
+      };
+    }
+    case "requestFailed":
+      return { ...state, request: { phase: "failed", failure: action.failure } };
+    case "productShown": {
+      const { view } = action;
+      if (!view.product) return state;
+      const product = view.product.product;
+      const range = product.full_subset_range;
       const display = { ...state.display };
       if (display.rangeSource === "full-subset" && range.minimum !== null && range.maximum !== null) {
         display.range = { minimum: range.minimum, maximum: range.maximum };
       }
       if (display.exaggerationSource === "suggested" && state.selection) {
-        display.verticalExaggeration = suggestedFor(state.selection);
+        const suggested = suggestedFor(state.selection, product.coordinates.units.depth);
+        if (suggested !== null) display.verticalExaggeration = suggested;
       }
       if (display.scale === "log" && !(display.range.minimum > 0)) display.scale = "linear";
-      return { ...state, request: { phase: "shown" }, product: view.product, budget: view.budget, display };
+      return {
+        ...state,
+        request: { phase: "shown" },
+        product: view.product,
+        budget: view.budget,
+        shown: { points: action.shownPoints, hiddenMissing: action.hiddenMissingPoints },
+        hovered: null,
+        display,
+        renderer: state.renderer.phase === "failed" ? { phase: "ok" } : state.renderer,
+      };
     }
-    case "requestFailed":
-      return { ...state, request: { phase: "failed", failure: action.failure } };
+    case "productRefused":
+      return {
+        ...state,
+        request: { phase: "failed", failure: { code: "unsupported_product", message: action.reason } },
+      };
+    case "productTooLarge":
+      if (!state.selection) return state;
+      return { ...state, selection: { ...state.selection, maximumPoints: action.retryWithPoints } };
+    case "displayOutcome":
+      return {
+        ...state,
+        displayProblem: action.outcome.status === "refused" ? action.outcome.reason : null,
+      };
     case "rendererEvent": {
       const { event } = action;
-      if (event.type === "ready") {
-        return { ...state, shown: { points: event.shownPoints, hiddenMissing: event.hiddenMissingPoints }, hovered: null };
+      switch (event.type) {
+        case "hover":
+          return { ...state, hovered: event.sample };
+        case "unsupported":
+          return { ...state, renderer: { phase: "unsupported", reason: event.reason } };
+        case "contextLost":
+          return { ...state, renderer: { phase: "lost", reason: event.reason } };
+        case "renderFailed":
+          if (state.renderer.phase === "unsupported" || state.renderer.phase === "lost") return state;
+          return { ...state, renderer: { phase: "failed", reason: event.reason } };
+        case "pick":
+          // Handled by the observation workflow (phase 4).
+          return state;
       }
-      if (event.type === "hover") return { ...state, hovered: event.sample };
-      if (event.type === "unsupported") return { ...state, renderer: { phase: "unsupported", reason: event.reason } };
-      if (event.type === "error") return { ...state, renderer: { phase: "error", reason: event.reason } };
-      if (event.type === "resource") {
-        // Lower the budget; the controller re-requests.
-        if (!state.selection) return state;
-        return { ...state, selection: { ...state.selection, maximumPoints: event.retryWithPoints } };
-      }
-      // Marker events are handled by the observation workflow (phase 4).
       return state;
     }
     case "setDisplay": {
@@ -182,7 +226,6 @@ export function reducer(state: State, action: Action): State {
           rangeSource: patch.range ? "custom" : state.display.rangeSource,
           exaggerationSource: patch.verticalExaggeration !== undefined ? "custom" : state.display.exaggerationSource,
         },
-        renderer: state.renderer.phase === "error" ? { phase: "ok" } : state.renderer,
       };
     }
     case "useFullSubsetRange": {

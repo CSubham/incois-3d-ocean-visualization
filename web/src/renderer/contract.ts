@@ -1,8 +1,12 @@
 // The S6 renderer facade: the only thing S7 knows about rendering.
 //
-// S7 hands over renderer-independent products and declarative display state,
-// and receives events. No scene, material, texture or buffer object crosses
-// this boundary, so another engine replaces the implementation, not the UI.
+// S7 hands over renderer-independent products and declarative display state.
+// Each hand-over returns its outcome at once, so S7 commits new state only for
+// what is actually shown and a refused product leaves the previous one both
+// displayed and described. Events carry only what happens later: pointer
+// hover, a marker pick, a failed mount, a render failure or a lost context.
+// No scene, material, texture or buffer object crosses this boundary, so
+// another engine replaces the implementation, not the UI.
 
 import type { MarkerSet } from "../api/observationWire";
 import type { PointFieldArrays, ProductDescriptor } from "../api/wire";
@@ -42,26 +46,43 @@ export interface MarkerPick {
   observedAt: string;
 }
 
+/** What became of a point field handed to the renderer. */
+export type FieldOutcome =
+  | { status: "shown"; shownPoints: number; hiddenMissingPoints: number }
+  /** Not drawn; the previous field, if any, is still displayed unchanged. */
+  | { status: "refused"; reason: string }
+  /** Not drawn; a request at ``retryWithPoints`` would be accepted. */
+  | { status: "too-large"; reason: string; retryWithPoints: number };
+
+export type MarkerOutcome =
+  | { status: "shown"; count: number }
+  | { status: "refused"; reason: string };
+
+export type DisplayOutcome =
+  | { status: "applied" }
+  | { status: "refused"; reason: string };
+
 export type RendererEvent =
-  | { type: "ready"; shownPoints: number; hiddenMissingPoints: number }
-  | { type: "markersReady"; count: number }
   | { type: "pick"; marker: MarkerPick }
   | { type: "hover"; sample: PointSample | null }
+  /** The browser cannot run this renderer at all. */
   | { type: "unsupported"; reason: string }
-  | { type: "resource"; reason: string; retryWithPoints: number }
-  | { type: "error"; reason: string };
+  /** Rendering stopped; a later successfully shown field clears it. */
+  | { type: "renderFailed"; reason: string }
+  /** The graphics context is gone and this renderer cannot restore it. */
+  | { type: "contextLost"; reason: string };
 
 export type RendererCommand = { type: "resetCamera" };
 
 export interface Renderer {
   readonly capabilities: RendererCapabilities;
   mount(container: HTMLElement): void;
-  showPointField(descriptor: ProductDescriptor, arrays: PointFieldArrays): void;
+  showPointField(descriptor: ProductDescriptor, arrays: PointFieldArrays): FieldOutcome;
   clear(): void;
   /** Observation markers at the sea surface; selecting one emits "pick". */
-  showMarkers(markers: MarkerSet): void;
+  showMarkers(markers: MarkerSet): MarkerOutcome;
   clearMarkers(): void;
-  applyDisplay(display: DisplayState): void;
+  applyDisplay(display: DisplayState): DisplayOutcome;
   command(command: RendererCommand): void;
   onEvent(listener: (event: RendererEvent) => void): () => void;
   dispose(): void;

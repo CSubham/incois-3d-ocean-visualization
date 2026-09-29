@@ -214,3 +214,28 @@ def test_the_browser_marker_fixture_matches_the_encoder():
 
     assert (golden / "observation-markers.json").read_text() == descriptor
     assert (golden / "observation-markers.bin").read_bytes() == buffer
+
+
+def test_the_browser_float32_marker_fixture_matches_the_encoder():
+    """Source-dtype-preserving markers: Argo positions stay float32 on the
+    wire, and the browser decoder must accept them as declared."""
+    import json
+    import os
+    from pathlib import Path
+
+    from processing.observation import build_observation_markers
+    from processing.tests.observation_fixtures import argo, argo_descriptor
+
+    golden = Path(__file__).resolve().parents[2] / "web" / "test-fixtures"
+    product = build_observation_markers(argo(), argo_descriptor())
+    described = wire_observation.describe(product, data_url="/data")
+    dtypes = {a["name"]: a["dtype"] for a in described["data"]["arrays"]}
+    assert dtypes["longitude"] == dtypes["latitude"] == "<f4"
+    descriptor = json.dumps(described, indent=2, sort_keys=True) + "\n"
+    _, buffer = wire_observation.encode(product)
+    if os.environ.get("WIRE_GOLDEN_UPDATE") == "1":
+        (golden / "observation-markers-f4.json").write_text(descriptor)
+        (golden / "observation-markers-f4.bin").write_bytes(buffer)
+
+    assert (golden / "observation-markers-f4.json").read_text() == descriptor
+    assert (golden / "observation-markers-f4.bin").read_bytes() == buffer

@@ -2,7 +2,7 @@
 // (serving/wire_observation.py). Text columns (identities, timestamps) arrive
 // as UTF-8 bytes plus n+1 offsets; numeric columns are typed-array views.
 
-import { view, WireError, type ArrayLayout } from "./wire";
+import { view, WireError, type ArrayLayout, type NumericArray } from "./wire";
 
 export const OBSERVATION_WIRE_FORMAT = "s5.observation-wire/1.0";
 
@@ -28,26 +28,34 @@ export interface MarkerDescriptor {
   data: { url: string; byte_length: number; arrays: TextColumnLayout[] };
 }
 
-/** One layer's markers, index-aligned across every column. */
+/** One layer's markers, index-aligned across every column.
+ *
+ *  Numeric columns keep the dtype S5 declared: source dtypes are preserved,
+ *  so Argo positions may arrive as float32. Nothing is widened or narrowed. */
 export interface MarkerSet {
   datasetVersionId: string;
+  /** The markers' coordinate reference; a renderer refuses one it cannot place. */
+  crs: string;
   verticalKind: "depth" | "pressure";
   verticalUnits: string | null;
-  longitude: Float64Array;
-  latitude: Float64Array;
-  verticalMinimum: Float64Array;
-  verticalMaximum: Float64Array;
+  longitude: NumericArray;
+  latitude: NumericArray;
+  verticalMinimum: NumericArray;
+  verticalMaximum: NumericArray;
   platformIds: string[];
   cycles: string[];
   observedAt: string[];
 }
 
-function numeric(layouts: Map<string, TextColumnLayout>, buffer: ArrayBuffer, name: string): Float64Array {
+const REAL_DTYPES = new Set(["<f4", "<f8"]);
+
+function numeric(layouts: Map<string, TextColumnLayout>, buffer: ArrayBuffer, name: string): NumericArray {
   const layout = layouts.get(name);
   if (!layout) throw new WireError(`the marker data has no ${name} array`);
-  const array = view(layout, buffer);
-  if (!(array instanceof Float64Array)) throw new WireError(`${name} must be float64`);
-  return array;
+  if (!REAL_DTYPES.has(layout.dtype)) {
+    throw new WireError(`${name} has dtype ${layout.dtype}; marker coordinates must be floating point`);
+  }
+  return view(layout, buffer);
 }
 
 function text(arrays: TextColumnLayout[], buffer: ArrayBuffer, column: string): string[] {
@@ -83,6 +91,7 @@ export function decodeMarkers(descriptor: MarkerDescriptor, buffer: ArrayBuffer)
   const byName = new Map(arrays.map((a) => [a.name, a]));
   const set: MarkerSet = {
     datasetVersionId: descriptor.product.dataset_identity.dataset_version_id,
+    crs: descriptor.product.spatial_reference.crs,
     verticalKind: descriptor.product.coordinates.vertical_kind,
     verticalUnits: descriptor.product.coordinates.units.vertical ?? null,
     longitude: numeric(byName, buffer, "longitude"),

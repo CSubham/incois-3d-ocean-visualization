@@ -26,14 +26,24 @@ export interface SceneFrame {
   depthSign: 1 | -1;
 }
 
+/** Whether positions in this CRS are longitude/latitude degrees this view places. */
+export function isGeographicCrs(crs: string): boolean {
+  return GEOGRAPHIC_CRS.has(crs);
+}
+
+/** Kilometres per depth unit, or undefined for a unit this view does not understand. */
+export function depthUnitsToKm(units: string | null | undefined): number | undefined {
+  return DEPTH_UNIT_KM[(units ?? "").trim().toLowerCase()];
+}
+
 export function sceneFrame(
   crs: string, depthUnits: string | null | undefined, verticalPositive: "down" | "up",
   bounds: { west: number; east: number; south: number; north: number },
 ): SceneFrame {
-  if (!GEOGRAPHIC_CRS.has(crs)) {
+  if (!isGeographicCrs(crs)) {
     throw new TransformError(`coordinate reference system ${crs} is not supported by this view`);
   }
-  const depthToKm = DEPTH_UNIT_KM[(depthUnits ?? "").trim().toLowerCase()];
+  const depthToKm = depthUnitsToKm(depthUnits);
   if (depthToKm === undefined) {
     throw new TransformError(`depth units ${JSON.stringify(depthUnits)} are not understood`);
   }
