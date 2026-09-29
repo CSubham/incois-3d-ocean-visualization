@@ -23,6 +23,7 @@ from psycopg.types.json import Jsonb
 from ingestion.domain.errors import IngestionError
 from ingestion.domain.package import CanonicalPackage, DatasetGeometry
 from ingestion.ports import StoragePort, StorageReceipt
+from ingestion.query import observation_vertical_kind
 from ingestion.storage.objects import ObjectStore
 
 #: Shapes that describe instruments rather than fields. Only these produce
@@ -93,9 +94,12 @@ class PostgresStorage(StoragePort):
                 source_kind, geometry, object_ref, location, sizes,
                 selection, validation, metadata, source_details,
                 time_values, depth_values,
-                time_start, time_end, depth_min, depth_max, footprint)
+                time_start, time_end,
+                vertical_min, vertical_max, vertical_kind, vertical_units,
+                depth_min, depth_max, footprint)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, ST_GeogFromText(%s))
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    ST_GeogFromText(%s))
             """,
             (package.import_id, package.source.source_id,
              package.source.source_name, package.source.dataset_id,
@@ -115,6 +119,8 @@ class PostgresStorage(StoragePort):
              (Jsonb(coordinate_values["depth_values"])
               if coordinate_values["depth_values"] is not None else None),
              extent.get("time_start"), extent.get("time_end"),
+             extent.get("vertical_min"), extent.get("vertical_max"),
+             extent.get("vertical_kind"), extent.get("vertical_units"),
              extent.get("depth_min"), extent.get("depth_max"),
              extent.get("footprint")))
 
@@ -140,11 +146,17 @@ class PostgresStorage(StoragePort):
             """
             INSERT INTO observation_profile (
                 import_id, platform_id, cycle, observed_at, position,
+                representative_source_index,
+                vertical_min, vertical_max, vertical_kind, vertical_units,
                 depth_min, depth_max, measurements)
-            VALUES (%s, %s, %s, %s, ST_MakePoint(%s, %s)::geography, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, ST_MakePoint(%s, %s)::geography,
+                    %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             [(package.import_id, p["platform_id"], p["cycle"], p["observed_at"],
-              p["longitude"], p["latitude"], p["depth_min"], p["depth_max"],
+              p["longitude"], p["latitude"],
+              p["representative_source_index"],
+              p["vertical_min"], p["vertical_max"], p["vertical_kind"],
+              p["vertical_units"], p["depth_min"], p["depth_max"],
               p["measurements"]) for p in profiles])
 
 
@@ -215,8 +227,19 @@ def _extent_of(package: CanonicalPackage) -> dict[str, Any]:
 
     vertical = _coordinate(package, "vertical")
     if vertical is not None and vertical.size:
-        extent["depth_min"] = _as_float(np.nanmin(vertical.values))
-        extent["depth_max"] = _as_float(np.nanmax(vertical.values))
+        vertical_min = _as_float(np.nanmin(vertical.values))
+        vertical_max = _as_float(np.nanmax(vertical.values))
+        vertical_units = _optional_text(vertical.attrs.get("units"))
+        vertical_kind = observation_vertical_kind(vertical_units)
+        extent.update({
+            "vertical_min": vertical_min,
+            "vertical_max": vertical_max,
+            "vertical_kind": vertical_kind,
+            "vertical_units": vertical_units,
+        })
+        if vertical_kind == "depth":
+            extent["depth_min"] = vertical_min
+            extent["depth_max"] = vertical_max
 
     latitude = _coordinate(package, "latitude")
     longitude = _coordinate(package, "longitude")
@@ -240,7 +263,10 @@ def _profiles_in(package: CanonicalPackage) -> list[dict[str, Any]]:
 
     Grouped by platform and cycle where the source supplied them. Without
     those a set of rows cannot be split into casts, so it is recorded as one
-    profile rather than invented into several.
+    profile rather than invented into several. The representative marker is
+    the first source row in each group with finite, in-range longitude and
+    latitude plus a valid time. Its complete tuple is retained without any
+    coordinate or time averaging.
     """
     dataset = package.dataset
     latitude = _coordinate(package, "latitude")
@@ -255,6 +281,9 @@ def _profiles_in(package: CanonicalPackage) -> list[dict[str, Any]]:
     vertical = _coordinate(package, "vertical")
     frame["depth"] = (np.atleast_1d(vertical.values).astype(float)
                       if vertical is not None else np.nan)
+    vertical_units = (_optional_text(vertical.attrs.get("units"))
+                      if vertical is not None else None)
+    vertical_kind = observation_vertical_kind(vertical_units)
     time = _coordinate(package, "time")
     frame["observed_at"] = (pd.to_datetime(np.atleast_1d(time.values),
                                            errors="coerce", utc=True)
@@ -267,21 +296,42 @@ def _profiles_in(package: CanonicalPackage) -> list[dict[str, Any]]:
 
     keys = [k for k in ("platform_id", "cycle") if frame[k].notna().any()]
     groups = (frame.groupby(keys, dropna=False) if keys
-              else [((None, None), frame)])
+              else [((), frame)])
 
     profiles: list[dict[str, Any]] = []
     for key, rows in (groups if keys else groups):
         values = key if isinstance(key, tuple) else (key,)
-        named = dict(zip(keys, [str(v) if v is not None else None for v in values]))
-        stamps = rows["observed_at"].dropna()
+        named = dict(zip(
+            keys,
+            [str(v) if v is not None else None for v in values],
+            strict=True,
+        ))
+        complete = rows[
+            np.isfinite(rows["longitude"])
+            & np.isfinite(rows["latitude"])
+            & rows["longitude"].between(-180.0, 360.0)
+            & rows["latitude"].between(-90.0, 90.0)
+            & rows["observed_at"].notna()
+        ]
+        if complete.empty:
+            continue
+        representative_index = int(complete.index[0])
+        representative = complete.iloc[0]
+        vertical_min = _as_float(rows["depth"].min())
+        vertical_max = _as_float(rows["depth"].max())
         profiles.append({
             "platform_id": named.get("platform_id"),
             "cycle": named.get("cycle"),
-            "observed_at": stamps.min().to_pydatetime() if len(stamps) else None,
-            "latitude": float(rows["latitude"].mean()),
-            "longitude": _signed(float(rows["longitude"].mean())),
-            "depth_min": _as_float(rows["depth"].min()),
-            "depth_max": _as_float(rows["depth"].max()),
+            "observed_at": representative["observed_at"].to_pydatetime(),
+            "latitude": float(representative["latitude"]),
+            "longitude": _signed(float(representative["longitude"])),
+            "representative_source_index": representative_index,
+            "vertical_min": vertical_min,
+            "vertical_max": vertical_max,
+            "vertical_kind": vertical_kind,
+            "vertical_units": vertical_units,
+            "depth_min": vertical_min if vertical_kind == "depth" else None,
+            "depth_max": vertical_max if vertical_kind == "depth" else None,
             "measurements": int(len(rows)),
         })
     return profiles
@@ -312,6 +362,13 @@ def _as_float(value: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return None if np.isnan(number) else number
+
+
+def _optional_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    rendered = str(value).strip()
+    return rendered or None
 
 
 def _plain(value: Any) -> Any:

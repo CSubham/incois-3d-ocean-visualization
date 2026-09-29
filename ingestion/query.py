@@ -74,7 +74,14 @@ class VariableSummary:
 
 @dataclass(frozen=True)
 class DatasetExtent:
-    """Catalogue extents without opening the scientific object."""
+    """Catalogue extents without opening the scientific object.
+
+    ``vertical_min`` and ``vertical_max`` are expressed in
+    ``vertical_units`` and interpreted only with ``vertical_kind``.
+    ``depth_min`` and ``depth_max`` are the backward-compatible depth-only
+    view: they are null for pressure coordinates and must never be read as a
+    generic vertical extent.
+    """
 
     time_start: str | None
     time_end: str | None
@@ -84,6 +91,10 @@ class DatasetExtent:
     east: float | None
     south: float | None
     north: float | None
+    vertical_min: float | None = None
+    vertical_max: float | None = None
+    vertical_kind: ObservationVerticalKind | None = None
+    vertical_units: str | None = None
 
 
 @dataclass(frozen=True)
@@ -207,6 +218,7 @@ class ProfileMarker:
     longitude: float
     latitude: float
     observed_at: str
+    representative_source_index: int | None = None
 
     def __post_init__(self) -> None:
         if not isfinite(self.longitude) or not -180.0 <= self.longitude <= 180.0:
@@ -214,6 +226,9 @@ class ProfileMarker:
         if not isfinite(self.latitude) or not -90.0 <= self.latitude <= 90.0:
             raise ValueError("profile latitude must be degrees north")
         _required_text(self.observed_at, "profile observed_at")
+        if (self.representative_source_index is not None
+                and self.representative_source_index < 0):
+            raise ValueError("representative source index must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -228,13 +243,18 @@ class ProfileVariable:
     qc_flag_values: tuple[ProfileValue, ...] | None = None
     qc_flag_meanings: str | None = None
     qc_conventions: str | None = None
+    source_dtype: str | None = None
+    qc_source_dtype: str | None = None
 
     def __post_init__(self) -> None:
         _required_text(self.name, "profile variable name")
+        if self.source_dtype is not None:
+            _required_text(self.source_dtype, "profile variable source dtype")
         if self.quality_control_name is None and self.quality_control is not None:
             raise ValueError("quality-control values require their variable name")
         qc_metadata = (
-            self.qc_flag_values, self.qc_flag_meanings, self.qc_conventions)
+            self.qc_flag_values, self.qc_flag_meanings, self.qc_conventions,
+            self.qc_source_dtype)
         if (self.quality_control_name is None
                 and any(value is not None for value in qc_metadata)):
             raise ValueError(
@@ -243,6 +263,8 @@ class ProfileVariable:
             _required_text(self.quality_control_name, "quality-control name")
             if self.quality_control is None:
                 raise ValueError("quality-control name requires values")
+        if self.qc_source_dtype is not None:
+            _required_text(self.qc_source_dtype, "quality-control source dtype")
         if (self.quality_control is not None
                 and len(self.quality_control) != len(self.values)):
             raise ValueError("quality-control values must match measurements")
@@ -266,6 +288,10 @@ class ObservationProfile:
     time_coordinate: str
     timestamps: tuple[str | None, ...]
     variables: tuple[ProfileVariable, ...]
+    source_indices: tuple[int, ...] | None = None
+    depth_source_dtype: str | None = None
+    time_source_dtype: str | None = None
+    time_encoding: Mapping[str, str | None] | None = None
 
     def __post_init__(self) -> None:
         _required_text(self.depth_coordinate, "profile depth coordinate")
@@ -280,6 +306,28 @@ class ObservationProfile:
         if any(len(variable.values) != measurements
                for variable in self.variables):
             raise ValueError("profile variable values must match depth values")
+        if self.source_indices is not None:
+            if len(self.source_indices) != measurements:
+                raise ValueError("profile source indices must match depth values")
+            if any(index < 0 for index in self.source_indices):
+                raise ValueError("profile source indices must be non-negative")
+            object.__setattr__(self, "source_indices", tuple(self.source_indices))
+        for value, name in (
+            (self.depth_source_dtype, "profile depth source dtype"),
+            (self.time_source_dtype, "profile time source dtype"),
+        ):
+            if value is not None:
+                _required_text(value, name)
+        if self.time_encoding is not None:
+            encoding = dict(self.time_encoding)
+            if set(encoding) - {"units", "calendar"}:
+                raise ValueError(
+                    "profile time encoding supports only units and calendar")
+            for name, value in encoding.items():
+                if value is not None:
+                    _required_text(value, f"profile time encoding {name}")
+            object.__setattr__(
+                self, "time_encoding", MappingProxyType(encoding))
 
 
 @dataclass(frozen=True)

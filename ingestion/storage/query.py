@@ -32,7 +32,9 @@ _VERSION_COLUMNS = """
     import_id, source_id, source_name, dataset_id, dataset_name,
     source_kind, geometry, object_ref, sizes, selection, validation,
     metadata, source_details, time_values, depth_values,
-    time_start, time_end, depth_min, depth_max,
+    time_start, time_end,
+    vertical_min, vertical_max, vertical_kind, vertical_units,
+    depth_min, depth_max,
     created_at,
     ST_XMin(Box2D(footprint::geometry)) AS west,
     ST_XMax(Box2D(footprint::geometry)) AS east,
@@ -64,6 +66,7 @@ ORDER BY import_id, name
 """
 _PROFILE_MARKERS_SQL = """
 SELECT import_id, platform_id, cycle, observed_at,
+       representative_source_index,
        ST_X(position::geometry) AS longitude,
        ST_Y(position::geometry) AS latitude
 FROM observation_profile
@@ -78,6 +81,7 @@ ORDER BY observed_at, import_id, platform_id, cycle
 """
 _PROFILE_SQL = """
 SELECT import_id, platform_id, cycle, observed_at,
+       representative_source_index,
        ST_X(position::geometry) AS longitude,
        ST_Y(position::geometry) AS latitude
 FROM observation_profile
@@ -450,6 +454,10 @@ def _summary(version: Mapping[str, Any],
             east=_optional_float(version.get("east")),
             south=_optional_float(version.get("south")),
             north=_optional_float(version.get("north")),
+            vertical_min=_optional_float(version.get("vertical_min")),
+            vertical_max=_optional_float(version.get("vertical_max")),
+            vertical_kind=_vertical_kind(version.get("vertical_kind")),
+            vertical_units=_optional_text(version.get("vertical_units")),
         ),
         created_at=_iso(version.get("created_at")) or "",
     )
@@ -582,6 +590,10 @@ def _observation_descriptor(version: Mapping[str, Any],
             east=_optional_float(version.get("east")),
             south=_optional_float(version.get("south")),
             north=_optional_float(version.get("north")),
+            vertical_min=_optional_float(version.get("vertical_min")),
+            vertical_max=_optional_float(version.get("vertical_max")),
+            vertical_kind=_vertical_kind(version.get("vertical_kind")),
+            vertical_units=_optional_text(version.get("vertical_units")),
         ),
         created_at=_iso(version.get("created_at")) or "",
         provenance=_version_provenance(version, version_id, {
@@ -702,6 +714,11 @@ def _optional_float(value: Any) -> float | None:
     return float(value) if value is not None else None
 
 
+def _vertical_kind(value: Any) -> str | None:
+    rendered = _optional_text(value)
+    return rendered if rendered in {"depth", "pressure"} else None
+
+
 def _catalogue_time_values(value: Any,
                            version_id: str) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
@@ -775,6 +792,10 @@ def _profile_marker(row: Mapping[str, Any]) -> ProfileMarker:
         longitude=longitude,
         latitude=latitude,
         observed_at=observed_at,
+        representative_source_index=(
+            int(row["representative_source_index"])
+            if row.get("representative_source_index") is not None else None
+        ),
     )
 
 
@@ -809,7 +830,7 @@ def _observation_profile(
     cycle_values = _text_values(cycle.values)
     positions = np.asarray([
         index for index, (platform_id, cycle_id) in enumerate(zip(
-            platform_values, cycle_values))
+            platform_values, cycle_values, strict=True))
         if platform_id == identity.platform_id and cycle_id == identity.cycle
     ], dtype=np.intp)
     if not positions.size:
@@ -832,6 +853,10 @@ def _observation_profile(
             _profile_variable(selected, variable, sample_dim, version_id)
             for variable in variables
         ),
+        source_indices=tuple(int(index) for index in positions),
+        depth_source_dtype=str(selected[depth_name].dtype),
+        time_source_dtype=str(selected[time_name].dtype),
+        time_encoding=_time_encoding(selected[time_name]),
     )
 
 
@@ -846,15 +871,18 @@ def _profile_variable(
         raise VariableUnavailable(version_id, name)
     quality_name = _quality_name(dataset, name)
     quality = dataset[quality_name] if quality_name is not None else None
+    values = dataset[name]
     return ProfileVariable(
         name=name,
         units=_optional_text(variable.get("units")),
-        values=_profile_values(dataset[name], sample_dim, version_id),
+        values=_profile_values(values, sample_dim, version_id),
+        source_dtype=str(values.dtype),
         quality_control_name=quality_name,
         quality_control=(
             _profile_values(quality, sample_dim, version_id)
             if quality is not None else None
         ),
+        qc_source_dtype=(str(quality.dtype) if quality is not None else None),
         qc_flag_values=(
             _qc_flag_values(quality, version_id)
             if quality is not None else None
@@ -977,6 +1005,13 @@ def _text_values(values: Any) -> tuple[str, ...]:
 
 def _optional_text(value: Any) -> str | None:
     return str(value) if value is not None else None
+
+
+def _time_encoding(array: xr.DataArray) -> Mapping[str, str | None]:
+    return {
+        "units": _optional_text(array.encoding.get("units")),
+        "calendar": _optional_text(array.encoding.get("calendar")),
+    }
 
 
 def _portable_mapping(value: Mapping[str, Any]) -> dict[str, Any]:

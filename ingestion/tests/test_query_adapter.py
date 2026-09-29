@@ -36,6 +36,7 @@ def _version(**changes):
                 "time": "time", "vertical": "depth",
                 "latitude": "lat", "longitude": "lon",
             },
+            "coordinate_units": {"vertical": "m"},
             "global_attributes": {
                 "title": "model",
                 "cache_path": "/private/cache/model.nc",
@@ -52,6 +53,10 @@ def _version(**changes):
         "depth_values": [0.0, 10.0, 20.0],
         "time_start": datetime(2026, 9, 28, tzinfo=timezone.utc),
         "time_end": datetime(2026, 9, 28, tzinfo=timezone.utc),
+        "vertical_min": 0.0,
+        "vertical_max": 20.0,
+        "vertical_kind": "depth",
+        "vertical_units": "m",
         "depth_min": 0.0,
         "depth_max": 20.0,
         "west": 72.0,
@@ -229,6 +234,10 @@ def test_summary_reads_exact_catalogue_coordinates_without_opening_object():
     assert summary.depth_values == (0.0, 10.0, 20.0)
     assert summary.time_steps == 1
     assert summary.time_values[0].startswith("2026-09-28T00:00:00")
+    assert summary.extent.vertical_min == 0.0
+    assert summary.extent.vertical_max == 20.0
+    assert summary.extent.vertical_kind == "depth"
+    assert summary.extent.vertical_units == "m"
     assert objects.opened == []
     assert objects.close_calls == 0
 
