@@ -3,6 +3,7 @@
 // Feature modules depend on the DataClient interface only; HttpDataClient is
 // the one binding to S5's HTTP surface and is chosen in main.tsx.
 
+import type { MarkerDescriptor, ProfileDescriptor } from "./observationWire";
 import type { ProductDescriptor } from "./wire";
 
 export interface CatalogueVersion {
@@ -22,6 +23,41 @@ export interface CatalogueVersion {
   time_values?: string[];
   depth_values?: number[];
   created_at: string;
+}
+
+/** An observation dataset version as S3 describes it. */
+export interface ObservationVersion {
+  dataset_id: string;
+  dataset_version_id: string;
+  source_id: string;
+  geometry: string;
+  vertical_coordinate: string;
+  vertical_units: string;
+  vertical_kind: "depth" | "pressure";
+  crs: string;
+  vertical_positive: "down" | "up";
+  variables: { name: string; units: string | null }[];
+  extent: CatalogueVersion["extent"];
+  created_at: string;
+}
+
+export interface Catalogue {
+  versions: CatalogueVersion[];
+  /** Null when the observation catalogue could not be read. */
+  observations: ObservationVersion[] | null;
+}
+
+export interface MarkerQuery {
+  dataset_version_id: string;
+  west: number; east: number; south: number; north: number;
+  time_start: string; time_end: string;
+}
+
+export interface ProfileQuery {
+  dataset_version_id: string;
+  platform_id: string;
+  cycle: string;
+  variables: string[];
 }
 
 export interface PointFieldIntent {
@@ -58,7 +94,9 @@ export class ServiceError extends Error {
 }
 
 export interface DataClient {
-  catalogue(signal?: AbortSignal): Promise<CatalogueVersion[]>;
+  catalogue(signal?: AbortSignal): Promise<Catalogue>;
+  observationMarkers(query: MarkerQuery, signal?: AbortSignal): Promise<MarkerDescriptor>;
+  observationProfile(query: ProfileQuery, signal?: AbortSignal): Promise<ProfileDescriptor>;
   /** Submit and wait until the request finishes, succeeded or failed. */
   pointField(intent: PointFieldIntent, signal?: AbortSignal): Promise<RequestView>;
   productData(url: string, signal?: AbortSignal): Promise<ArrayBuffer>;
@@ -72,9 +110,24 @@ export class HttpDataClient implements DataClient {
     private readonly pollIntervalMs = 500,
   ) {}
 
-  async catalogue(signal?: AbortSignal): Promise<CatalogueVersion[]> {
-    const body = await this.json("/api/v1/catalogue", { signal });
-    return (body as { versions: CatalogueVersion[] }).versions;
+  async catalogue(signal?: AbortSignal): Promise<Catalogue> {
+    const body = await this.json("/api/v1/catalogue", { signal }) as {
+      versions: CatalogueVersion[]; observation_versions?: ObservationVersion[] | null;
+    };
+    return { versions: body.versions, observations: body.observation_versions ?? null };
+  }
+
+  observationMarkers(query: MarkerQuery, signal?: AbortSignal): Promise<MarkerDescriptor> {
+    const params = new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)]));
+    return this.json(`/api/v1/observation-markers?${params}`, { signal }) as Promise<MarkerDescriptor>;
+  }
+
+  observationProfile(query: ProfileQuery, signal?: AbortSignal): Promise<ProfileDescriptor> {
+    const params = new URLSearchParams({
+      dataset_version_id: query.dataset_version_id, platform_id: query.platform_id, cycle: query.cycle,
+    });
+    for (const variable of query.variables) params.append("variables", variable);
+    return this.json(`/api/v1/observation-profiles?${params}`, { signal }) as Promise<ProfileDescriptor>;
   }
 
   async pointField(intent: PointFieldIntent, signal?: AbortSignal): Promise<RequestView> {

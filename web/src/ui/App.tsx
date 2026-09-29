@@ -8,12 +8,15 @@ import { useDisclosure } from "@mantine/hooks";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import { ServiceError, type DataClient } from "../api/client";
+import { decodeMarkers, decodeProfile } from "../api/observationWire";
 import { decodePointField, WireError } from "../api/wire";
 import type { Renderer, RendererFactory } from "../renderer/contract";
-import { initialState, intentFor, reducer, type Selection } from "../state/store";
+import { initialState, intentFor, markerQueryFor, reducer, type Selection } from "../state/store";
 import { Colourbar } from "./Colourbar";
 import { DisplayPanel } from "./DisplayPanel";
 import { HoverReadout } from "./HoverReadout";
+import { ObservationPanel } from "./ObservationPanel";
+import { ProfileDrawer } from "./ProfileDrawer";
 import { SamplingDisclosure } from "./SamplingDisclosure";
 import { SelectionPanel } from "./SelectionPanel";
 import { StatusBanner } from "./StatusBanner";
@@ -21,6 +24,15 @@ import { StatusBanner } from "./StatusBanner";
 interface Props {
   client: DataClient;
   createRenderer: RendererFactory;
+}
+
+/** A failure the user can act on, from whatever went wrong. */
+function failureOf(error: unknown) {
+  return error instanceof ServiceError
+    ? { code: error.code, message: error.message }
+    : error instanceof WireError
+      ? { code: "unreadable_product", message: error.message }
+      : { code: "network", message: "the server could not be reached" };
 }
 
 export function App({ client, createRenderer }: Props) {
@@ -58,16 +70,61 @@ export function App({ client, createRenderer }: Props) {
       }
     } catch (error) {
       if (controller.signal.aborted) return;
-      const failure = error instanceof ServiceError
-        ? { code: error.code, message: error.message }
-        : error instanceof WireError
-          ? { code: "unreadable_product", message: error.message }
-          : { code: "network", message: "the server could not be reached" };
-      dispatch({ type: "requestFailed", failure });
+      dispatch({ type: "requestFailed", failure: failureOf(error) });
     }
   }, [client, renderer]);
   const loadRef = useRef(load);
   loadRef.current = load;
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  // Floats for the chosen observation version, inside the field's region.
+  const markersInFlight = useRef<AbortController | null>(null);
+  const showFloats = useCallback(async () => {
+    const query = markerQueryFor(stateRef.current);
+    if (!query) return;
+    markersInFlight.current?.abort();
+    const controller = new AbortController();
+    markersInFlight.current = controller;
+    dispatch({ type: "markersStarted" });
+    try {
+      const descriptor = await client.observationMarkers(query, controller.signal);
+      const buffer = await client.productData(descriptor.data.url, controller.signal);
+      const markers = decodeMarkers(descriptor, buffer);
+      if (controller.signal.aborted) return;
+      const outcome = renderer.showMarkers(markers);
+      dispatch(outcome.status === "shown"
+        ? { type: "markersShown", count: outcome.count }
+        : { type: "markersFailed", failure: { code: "unsupported_product", message: outcome.reason } });
+    } catch (error) {
+      if (!controller.signal.aborted) dispatch({ type: "markersFailed", failure: failureOf(error) });
+    }
+  }, [client, renderer]);
+
+  // A picked float's exact profile, every variable its dataset declares.
+  const pick = state.profile.pick;
+  useEffect(() => {
+    if (!pick) return;
+    const version = stateRef.current.observations.versions?.find((v) => v.dataset_version_id === pick.datasetVersionId);
+    const variables = version?.variables.map((v) => v.name) ?? [];
+    if (variables.length === 0) {
+      dispatch({ type: "profileFailed", failure: { code: "variable_unavailable", message: "this dataset declares no variables to plot" } });
+      return;
+    }
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const descriptor = await client.observationProfile({
+          dataset_version_id: pick.datasetVersionId, platform_id: pick.platformId, cycle: pick.cycle, variables,
+        }, controller.signal);
+        const buffer = await client.productData(descriptor.data.url, controller.signal);
+        if (!controller.signal.aborted) dispatch({ type: "profileShown", profile: decodeProfile(descriptor, buffer) });
+      } catch (error) {
+        if (!controller.signal.aborted) dispatch({ type: "profileFailed", failure: failureOf(error) });
+      }
+    })();
+    return () => controller.abort();   // a newer pick supersedes this one
+  }, [client, pick]);
 
   useEffect(() => {
     const unsubscribe = renderer.onEvent((event) => dispatch({ type: "rendererEvent", event }));
@@ -81,7 +138,7 @@ export function App({ client, createRenderer }: Props) {
   useEffect(() => {
     const controller = new AbortController();
     client.catalogue(controller.signal)
-      .then((versions) => dispatch({ type: "catalogueLoaded", versions }))
+      .then((catalogue) => dispatch({ type: "catalogueLoaded", versions: catalogue.versions, observations: catalogue.observations }))
       .catch((error) => {
         if (!controller.signal.aborted) {
           dispatch({ type: "catalogueFailed", message: error instanceof ServiceError ? error.message : "the catalogue could not be reached" });
@@ -111,7 +168,7 @@ export function App({ client, createRenderer }: Props) {
           <Group gap="sm">
             <Burger opened={navOpen} onClick={toggleNav} size="sm" aria-label="Toggle controls" />
             <Title order={1} size="h4">INCOIS 3D Ocean Viewer</Title>
-            <Badge variant="light" color="gray">Prototype · sampled scalar field</Badge>
+            <Badge variant="light" color="gray">Prototype · sampled model field · observations</Badge>
           </Group>
         </Group>
       </AppShell.Header>
@@ -135,6 +192,13 @@ export function App({ client, createRenderer }: Props) {
               onChange={(patch) => dispatch({ type: "setDisplay", patch })}
               onUseFullSubsetRange={() => dispatch({ type: "useFullSubsetRange" })}
               onResetCamera={() => renderer.command({ type: "resetCamera" })}
+            />
+            <ObservationPanel
+              observations={state.observations}
+              canSearch={markerQueryFor(state) !== null}
+              onSelectVersion={(versionId) => dispatch({ type: "selectObservationVersion", versionId })}
+              onEditWindow={(patch) => dispatch({ type: "editObservationWindow", patch })}
+              onShow={() => void showFloats()}
             />
           </Stack>
         </ScrollArea>
@@ -162,6 +226,7 @@ export function App({ client, createRenderer }: Props) {
             </div>
           </>
         )}
+        <ProfileDrawer profile={state.profile} onClose={() => dispatch({ type: "profileClosed" })} />
       </AppShell.Main>
     </AppShell>
   );

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type { CatalogueVersion, RequestView } from "../api/client";
+import type { CatalogueVersion, ObservationVersion, RequestView } from "../api/client";
+import type { DecodedProfile } from "../api/observationWire";
 import type { ProductDescriptor } from "../api/wire";
-import { initialState, intentFor, reducer, type State } from "./store";
+import { initialState, intentFor, markerQueryFor, reducer, type State } from "./store";
 
 const version: CatalogueVersion = {
   id: "v1", dataset: "GLBy0.08", geometry: "grid",
@@ -142,5 +143,55 @@ describe("S7 state", () => {
     const after = reducer(before, { type: "requestFinished", view: failed });
     expect(after.request).toEqual({ phase: "failed", failure: { code: "work_limit", message: "too big" } });
     expect(after.product).toBe(before.product);
+  });
+
+  describe("observations and profiles", () => {
+    const argo: ObservationVersion = {
+      dataset_id: "Indian_ARGO_Floats", dataset_version_id: "o-argo", source_id: "incois_erddap", geometry: "profile",
+      vertical_coordinate: "PRES", vertical_units: "decibar", vertical_kind: "pressure", crs: "EPSG:4326",
+      vertical_positive: "down", variables: [{ name: "TEMP", units: "degree_Celsius" }],
+      extent: { time_start: "2024-09-01T13:56:00+00:00", time_end: "2024-09-09T08:27:00+00:00",
+        depth_min: null, depth_max: null, west: 66, east: 85, south: 6, north: 20 },
+      created_at: "2026-09-29T00:00:00+00:00",
+    };
+    const withObs = (): State => reducer(initialState(500_000), { type: "catalogueLoaded", versions: [version], observations: [argo] });
+    const pick = { datasetVersionId: "o-argo", platformId: "5907085", cycle: "32", longitude: 80, latitude: 12, observedAt: "2024-09-02T10:00:00" };
+
+    it("defaults to the first observation dataset and its own time range", () => {
+      const s = withObs();
+      expect(s.observations).toMatchObject({ versionId: "o-argo", timeStart: argo.extent.time_start, timeEnd: argo.extent.time_end });
+    });
+
+    it("searches floats inside the model field's region", () => {
+      expect(markerQueryFor(withObs())).toEqual({
+        dataset_version_id: "o-argo", west: 80, east: 92, south: 5, north: 21,
+        time_start: argo.extent.time_start, time_end: argo.extent.time_end,
+      });
+    });
+
+    it("keeps an unreadable observation catalogue distinct from an empty one", () => {
+      const s = reducer(initialState(500_000), { type: "catalogueLoaded", versions: [version], observations: null });
+      expect(s.observations.versions).toBeNull();
+      expect(markerQueryFor(s)).toBeNull();
+    });
+
+    it("opens a profile request for exactly the picked float", () => {
+      const s = reducer(withObs(), { type: "rendererEvent", event: { type: "pick", marker: pick } });
+      expect(s.profile).toEqual({ phase: "loading", pick, profile: null });
+    });
+
+    it("ignores a profile that arrives after the drawer was closed", () => {
+      let s = reducer(withObs(), { type: "rendererEvent", event: { type: "pick", marker: pick } });
+      s = reducer(s, { type: "profileClosed" });
+      s = reducer(s, { type: "profileShown", profile: {} as DecodedProfile });
+      expect(s.profile.phase).toBe("closed");
+    });
+
+    it("counts shown markers and reports a failed search", () => {
+      let s = reducer(withObs(), { type: "markersShown", count: 15 });
+      expect(s.observations).toMatchObject({ phase: "shown", count: 15 });
+      s = reducer(s, { type: "markersFailed", failure: { code: "work_limit", message: "too many" } });
+      expect(s.observations.phase).toBe("failed");
+    });
   });
 });

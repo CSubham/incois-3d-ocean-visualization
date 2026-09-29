@@ -41,3 +41,27 @@ describe("HttpDataClient", () => {
     await expect(pending).rejects.toBeDefined();
   });
 });
+
+describe("HttpDataClient observations", () => {
+  it("reads both halves of the catalogue, keeping an unreadable observation half as null", async () => {
+    const ok = new HttpDataClient(fakeFetch([json({ versions: [], observation_versions: [{ dataset_version_id: "o1" }] })]).impl);
+    expect((await ok.catalogue()).observations).toEqual([{ dataset_version_id: "o1" }]);
+    const down = new HttpDataClient(fakeFetch([json({ versions: [], observation_versions: null })]).impl);
+    expect((await down.catalogue()).observations).toBeNull();
+  });
+
+  it("asks for markers and an exact profile by query string", async () => {
+    const markers = fakeFetch([json({ wire_format: "w" })]);
+    await new HttpDataClient(markers.impl).observationMarkers({
+      dataset_version_id: "o1", west: 60, east: 90, south: 0, north: 25,
+      time_start: "2024-09-01T00:00:00Z", time_end: "2024-09-10T00:00:00Z",
+    });
+    expect(markers.calls[0]).toBe("/api/v1/observation-markers?dataset_version_id=o1&west=60&east=90&south=0&north=25&time_start=2024-09-01T00%3A00%3A00Z&time_end=2024-09-10T00%3A00%3A00Z");
+
+    const profile = fakeFetch([json({ wire_format: "w" })]);
+    await new HttpDataClient(profile.impl).observationProfile({
+      dataset_version_id: "o1", platform_id: "5907085", cycle: "32", variables: ["TEMP", "PSAL"],
+    });
+    expect(profile.calls[0]).toBe("/api/v1/observation-profiles?dataset_version_id=o1&platform_id=5907085&cycle=32&variables=TEMP&variables=PSAL");
+  });
+});

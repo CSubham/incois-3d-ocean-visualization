@@ -5,9 +5,10 @@
 // cause reprocessing. A product becomes the shown product only when the
 // renderer reports it shown, so state always describes what is on screen.
 
-import type { Budget, CatalogueVersion, Failure, RequestView } from "../api/client";
+import type { Budget, CatalogueVersion, Failure, MarkerQuery, ObservationVersion, RequestView } from "../api/client";
+import type { DecodedProfile } from "../api/observationWire";
 import type { ProductDescriptor } from "../api/wire";
-import type { DisplayOutcome, DisplayState, PointSample, RendererEvent } from "../renderer/contract";
+import type { DisplayOutcome, DisplayState, MarkerPick, PointSample, RendererEvent } from "../renderer/contract";
 import { depthUnitsToKm, suggestedExaggeration } from "../renderer/transform";
 
 export interface Selection {
@@ -32,6 +33,24 @@ export type RequestState =
   | { phase: "shown" }
   | { phase: "failed"; failure: Failure };
 
+export interface Observations {
+  /** Null when the observation catalogue could not be read. */
+  versions: ObservationVersion[] | null;
+  versionId: string | null;
+  timeStart: string;
+  timeEnd: string;
+  phase: "idle" | "loading" | "shown" | "failed";
+  count: number;
+  failure?: Failure;
+}
+
+export interface ProfileState {
+  phase: "closed" | "loading" | "shown" | "failed";
+  pick: MarkerPick | null;
+  profile: DecodedProfile | null;
+  failure?: Failure;
+}
+
 export interface State {
   catalogue: { phase: "loading" | "ready" | "failed"; versions: CatalogueVersion[]; message?: string };
   selection: Selection | null;
@@ -47,10 +66,12 @@ export interface State {
   /** "unsupported" and "lost" are permanent; "failed" clears when a field is shown. */
   renderer: { phase: "ok" | "unsupported" | "lost" | "failed"; reason?: string };
   rendererMaximumPoints: number;
+  observations: Observations;
+  profile: ProfileState;
 }
 
 export type Action =
-  | { type: "catalogueLoaded"; versions: CatalogueVersion[] }
+  | { type: "catalogueLoaded"; versions: CatalogueVersion[]; observations?: ObservationVersion[] | null }
   | { type: "catalogueFailed"; message: string }
   | { type: "selectVersion"; versionId: string }
   | { type: "editSelection"; patch: Partial<Omit<Selection, "versionId">> }
@@ -67,7 +88,15 @@ export type Action =
   | { type: "displayOutcome"; outcome: DisplayOutcome }
   | { type: "rendererEvent"; event: RendererEvent }
   | { type: "setDisplay"; patch: Partial<Omit<Display, "rangeSource" | "exaggerationSource">> }
-  | { type: "useFullSubsetRange" };
+  | { type: "useFullSubsetRange" }
+  | { type: "selectObservationVersion"; versionId: string }
+  | { type: "editObservationWindow"; patch: { timeStart?: string; timeEnd?: string } }
+  | { type: "markersStarted" }
+  | { type: "markersShown"; count: number }
+  | { type: "markersFailed"; failure: Failure }
+  | { type: "profileShown"; profile: DecodedProfile }
+  | { type: "profileFailed"; failure: Failure }
+  | { type: "profileClosed" };
 
 export const DEFAULT_POINTS = 200_000;
 
@@ -89,6 +118,33 @@ export function initialState(rendererMaximumPoints: number): State {
     },
     renderer: { phase: "ok" },
     rendererMaximumPoints,
+    observations: { versions: [], versionId: null, timeStart: "", timeEnd: "", phase: "idle", count: 0 },
+    profile: { phase: "closed", pick: null, profile: null },
+  };
+}
+
+function observationDefaults(version: ObservationVersion | undefined) {
+  return {
+    versionId: version?.dataset_version_id ?? null,
+    timeStart: version?.extent.time_start ?? "",
+    timeEnd: version?.extent.time_end ?? "",
+  };
+}
+
+/** Markers for the chosen observation version, inside the model field's region
+ *  when one is selected, else the version's own extent. */
+export function markerQueryFor(state: State): MarkerQuery | null {
+  const obs = state.observations;
+  const version = obs.versions?.find((v) => v.dataset_version_id === obs.versionId);
+  if (!version || !obs.timeStart || !obs.timeEnd) return null;
+  const region = state.selection ?? {
+    west: version.extent.west ?? -180, east: version.extent.east ?? 180,
+    south: version.extent.south ?? -90, north: version.extent.north ?? 90,
+  };
+  return {
+    dataset_version_id: version.dataset_version_id,
+    west: region.west, east: region.east, south: region.south, north: region.north,
+    time_start: obs.timeStart, time_end: obs.timeEnd,
   };
 }
 
@@ -120,10 +176,12 @@ export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "catalogueLoaded": {
       const first = action.versions[0];
+      const observations = action.observations === undefined ? [] : action.observations;
       return {
         ...state,
         catalogue: { phase: "ready", versions: action.versions },
         selection: first ? defaultSelection(first, state.rendererMaximumPoints) : null,
+        observations: { ...state.observations, versions: observations, ...observationDefaults(observations?.[0]) },
       };
     }
     case "catalogueFailed":
@@ -212,8 +270,8 @@ export function reducer(state: State, action: Action): State {
           if (state.renderer.phase === "unsupported" || state.renderer.phase === "lost") return state;
           return { ...state, renderer: { phase: "failed", reason: event.reason } };
         case "pick":
-          // Handled by the observation workflow (phase 4).
-          return state;
+          // An exact profile identity: the controller fetches that profile.
+          return { ...state, profile: { phase: "loading", pick: event.marker, profile: null } };
       }
       return state;
     }
@@ -236,6 +294,27 @@ export function reducer(state: State, action: Action): State {
         display: { ...state.display, range: { minimum: range.minimum, maximum: range.maximum }, rangeSource: "full-subset" },
       };
     }
+    case "selectObservationVersion": {
+      const version = state.observations.versions?.find((v) => v.dataset_version_id === action.versionId);
+      if (!version) return state;
+      return { ...state, observations: { ...state.observations, ...observationDefaults(version), phase: "idle", count: 0 } };
+    }
+    case "editObservationWindow":
+      return { ...state, observations: { ...state.observations, ...action.patch } };
+    case "markersStarted":
+      return { ...state, observations: { ...state.observations, phase: "loading", failure: undefined } };
+    case "markersShown":
+      return { ...state, observations: { ...state.observations, phase: "shown", count: action.count, failure: undefined } };
+    case "markersFailed":
+      return { ...state, observations: { ...state.observations, phase: "failed", failure: action.failure } };
+    case "profileShown":
+      if (state.profile.phase === "closed") return state;
+      return { ...state, profile: { ...state.profile, phase: "shown", profile: action.profile, failure: undefined } };
+    case "profileFailed":
+      if (state.profile.phase === "closed") return state;
+      return { ...state, profile: { ...state.profile, phase: "failed", failure: action.failure } };
+    case "profileClosed":
+      return { ...state, profile: { phase: "closed", pick: null, profile: null } };
   }
 }
 
