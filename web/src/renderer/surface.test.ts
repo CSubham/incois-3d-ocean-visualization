@@ -38,6 +38,28 @@ describe("surface grids", () => {
     expect(Array.from(pixels.slice(0, 3))).not.toEqual(Array.from(pixels.slice(12, 15)));
   });
 
+  it("rotates a whole 0..360 globe to start at the antimeridian", () => {
+    const globe = new Float64Array(36).map((_, i) => 5 + i * 10);   // 5..355
+    const g = gridGeometry(globe, lat);
+    expect(g.imageWest).toBe(-180);
+    expect(g.imageEast).toBe(180);
+    expect(globe[g.firstColumn]).toBe(185);   // west edge 180 = -180
+    const values = new Float32Array(72).map((_, i) => i % 36);
+    const pixels = rasterise(values, new Uint8Array(72), g, { palette: "viridis", range: { minimum: 0, maximum: 35 }, scale: "linear" });
+    const reference = rasterise(new Float32Array(72).fill(18), new Uint8Array(72), g, { palette: "viridis", range: { minimum: 0, maximum: 35 }, scale: "linear" });
+    // The first pixel shows source column 18 (lon 185).
+    expect(Array.from(pixels.slice(0, 3))).toEqual(Array.from(reference.slice(0, 3)));
+    // A pointer at -175 (= 185) finds that same source column.
+    expect(cellAt(g, -175, -1)).toBe(18);
+  });
+
+  it("lets a regional field cross the antimeridian", () => {
+    const g = gridGeometry(new Float64Array([170, 175, 180, 185, 190]), lat);
+    expect(g.imageWest).toBeCloseTo(167.5);
+    expect(g.imageEast).toBeCloseTo(-167.5);
+    expect(g.firstColumn).toBe(0);
+  });
+
   it("finds the source cell under a position, and nothing outside", () => {
     const g = gridGeometry(lon, lat);
     expect(cellAt(g, 30.09, -0.97)).toBe(1 * 3 + 1);

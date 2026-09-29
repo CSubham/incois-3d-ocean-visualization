@@ -21,6 +21,14 @@ interface SliceMetadata {
   physical_range: Range;
   interpolation: { delivered_depth: number; is_interpolated: boolean };
   spatial_reference: { crs: string };
+  /** How S4 fitted the slice to the view budget; factor 1 is source cells. */
+  reduction?: {
+    method: string;
+    factor: number;
+    maximum_cells: number | null;
+    source_shape: [number, number];
+    delivered_shape: [number, number];
+  } | null;
 }
 
 export interface SliceDescriptor {

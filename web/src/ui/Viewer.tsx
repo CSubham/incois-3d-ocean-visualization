@@ -5,18 +5,18 @@
 // facade.
 
 import {
-  ActionIcon, Alert, Badge, Group, Loader, Paper, SegmentedControl, Slider, Stack,
-  Switch, Text, Title,
+  ActionIcon, Alert, Badge, Group, Loader, Paper, Slider, Stack, Switch, Text, Title,
 } from "@mantine/core";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { ServiceError, type DataClient } from "../api/client";
 import { decodeMarkers, decodeProfile } from "../api/observationWire";
 import { decodeSlice, decodeVector } from "../api/sliceWire";
 import { WireError } from "../api/wire";
 import { cssGradient } from "../renderer/colour";
-import type { PaletteName, Renderer, RendererFactory, SurfaceField } from "../renderer/contract";
+import type { Extent, PaletteName, Renderer, RendererFactory, SurfaceField } from "../renderer/contract";
 import { robustRange } from "../renderer/surface";
+import { detailExtent } from "../state/detail";
 import {
   available, floatQuery, initialViewerState, viewerReducer, type LayerKind, type Range,
   type SurfaceSource,
@@ -40,7 +40,12 @@ const STEP_MS = 900;
 /** Decoded frames kept in memory; a current frame is about 30 MB. */
 const CACHED_FRAMES = 12;
 
-interface Frame { field: SurfaceField; range: Range | null }
+interface Frame {
+  field: SurfaceField;
+  range: Range | null;
+  /** S4's reduction factor: source cells per delivered cell along each axis. */
+  factor: number;
+}
 
 function failureOf(error: unknown) {
   return error instanceof ServiceError
@@ -60,18 +65,20 @@ export function Viewer({ client, createRenderer }: Props) {
   // Frames by layer and time. Promises are cached so a frame requested twice
   // (shown, then prefetched) is fetched once.
   const frames = useRef(new Map<string, Promise<Frame>>());
-  const frame = useCallback((source: SurfaceSource, layer: LayerKind, time: string): Promise<Frame> => {
-    const key = `${source.versionId}|${layer}|${time}`;
+  const frame = useCallback((source: SurfaceSource, layer: LayerKind, time: string,
+                             extent: Extent, budget: number): Promise<Frame> => {
+    const key = `${source.versionId}|${layer}|${time}|${extent.west},${extent.east},${extent.south},${extent.north}|${budget}`;
     const cached = frames.current.get(key);
     if (cached) return cached;
-    const window = { dataset_version_id: source.versionId, time, depth: source.depth, ...source.area };
+    const window = { dataset_version_id: source.versionId, time, depth: source.depth, ...extent };
     const loading = (async (): Promise<Frame> => {
       if (layer === "temperature") {
-        const descriptor = await client.depthSlice(window, source.temperature!);
+        const descriptor = await client.depthSlice(window, source.temperature!, budget);
         const arrays = decodeSlice(descriptor, await client.productData(descriptor.data.url));
         return {
           field: { ...arrays, units: descriptor.product.variable_units },
           range: robustRange(arrays.values, arrays.missingValueMask),
+          factor: descriptor.product.reduction?.factor ?? 1,
         };
       }
       const { eastward, northward } = source.currents!;
@@ -86,6 +93,7 @@ export function Viewer({ client, createRenderer }: Props) {
         },
         // Speed starts at still water, whatever the slowest cell happens to be.
         range: range && { minimum: 0, maximum: range.maximum },
+        factor: 1,
       };
     })();
     loading.catch(() => frames.current.delete(key));   // a failure is retried next time
@@ -125,7 +133,11 @@ export function Viewer({ client, createRenderer }: Props) {
     if (source) renderer.command({ type: "flyTo", ...source.area });
   }, [renderer, source]);
 
-  // Show the chosen layer at the chosen time; a newer choice supersedes it.
+  // The view budget S4 fits every layer to: this renderer's declared figure.
+  const budget = renderer.capabilities.maximumSurfaceCells;
+
+  // The whole field at the chosen time, fitted to the budget; a newer choice
+  // supersedes it.
   const shownSequence = useRef(0);
   useEffect(() => {
     if (!source || !available(source, layer)) return;
@@ -134,23 +146,58 @@ export function Viewer({ client, createRenderer }: Props) {
     dispatch({ type: "frameStarted" });
     (async () => {
       try {
-        const loaded = await frame(source, layer, time);
+        const loaded = await frame(source, layer, time, source.area, budget);
         if (sequence !== shownSequence.current) return;
         const range = stateRef.current.ranges[layer] ?? loaded.range ?? { minimum: 0, maximum: 1 };
-        const outcome = await renderer.showSurface(loaded.field, { palette: LAYERS[layer].palette, range, scale: "linear" });
+        const outcome = await renderer.showSurface(loaded.field, { palette: LAYERS[layer].palette, range, scale: "linear" }, "base");
         if (sequence !== shownSequence.current || outcome.status === "superseded") return;
         if (outcome.status === "refused") {
           dispatch({ type: "frameFailed", failure: { code: "unsupported_product", message: outcome.reason } });
           return;
         }
-        dispatch({ type: "frameShown", layer, range, units: loaded.field.units });
+        dispatch({ type: "frameShown", layer, range, units: loaded.field.units, factor: loaded.factor });
         // Fetch the next step ahead so playback does not wait on the network.
-        void frame(source, layer, source.times[(timeIndex + 1) % source.times.length]).catch(() => undefined);
+        const next = source.times[(timeIndex + 1) % source.times.length];
+        void frame(source, layer, next, source.area, budget).catch(() => undefined);
       } catch (error) {
         if (sequence === shownSequence.current) dispatch({ type: "frameFailed", failure: failureOf(error) });
       }
     })();
-  }, [renderer, frame, source, layer, timeIndex]);
+  }, [renderer, frame, budget, source, layer, timeIndex]);
+
+  // The part in view at finer resolution, when the whole-field layer is
+  // coarser than the source and most of the field is out of view.
+  const detail = useMemo(
+    () => (source ? detailExtent(source.area, state.view, state.baseFactor) : null),
+    [source, state.view, state.baseFactor]);
+  const detailKey = detail ? `${detail.west},${detail.east},${detail.south},${detail.north}` : "";
+  const detailSequence = useRef(0);
+  useEffect(() => {
+    const sequence = ++detailSequence.current;
+    if (!source || !detail || !available(source, layer)) {
+      renderer.clearSurface("detail");
+      dispatch({ type: "detailCleared" });
+      return;
+    }
+    const time = source.times[timeIndex];
+    dispatch({ type: "detailStarted" });
+    (async () => {
+      try {
+        const loaded = await frame(source, layer, time, detail, budget);
+        if (sequence !== detailSequence.current) return;
+        const range = stateRef.current.ranges[layer] ?? loaded.range ?? { minimum: 0, maximum: 1 };
+        const outcome = await renderer.showSurface(loaded.field, { palette: LAYERS[layer].palette, range, scale: "linear" }, "detail");
+        if (sequence !== detailSequence.current || outcome.status === "superseded") return;
+        dispatch(outcome.status === "shown"
+          ? { type: "detailShown", factor: loaded.factor }
+          : { type: "detailFailed", failure: { code: "unsupported_product", message: outcome.reason } });
+      } catch (error) {
+        if (sequence === detailSequence.current) dispatch({ type: "detailFailed", failure: failureOf(error) });
+      }
+    })();
+    // detail is read through detailKey, which changes exactly when it does
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderer, frame, budget, source, layer, timeIndex, detailKey]);
 
   // Playback advances only once the current step is on screen.
   useEffect(() => {
@@ -211,6 +258,7 @@ export function Viewer({ client, createRenderer }: Props) {
   }, [client, pick]);
 
   const range = state.ranges[layer];
+  const shownFactor = state.detail.phase === "shown" ? state.detail.factor : state.baseFactor;
   const units = displayUnits(state.units[layer] ?? "");
   const time = source?.times[timeIndex];
   const problem = state.renderer.phase !== "ok" ? state.renderer.reason
@@ -230,15 +278,7 @@ export function Viewer({ client, createRenderer }: Props) {
                 {source ? `${source.dataset} · sea surface · ${source.times.length} time steps` : "Loading the catalogue…"}
               </Text>
             </div>
-            <SegmentedControl
-              fullWidth
-              value={layer}
-              onChange={(value) => dispatch({ type: "selectLayer", layer: value as LayerKind })}
-              data={[
-                { value: "temperature", label: "Temperature", disabled: !available(source, "temperature") },
-                { value: "currents", label: "Currents", disabled: !available(source, "currents") },
-              ]}
-            />
+            <Text fw={600} size="sm">{LAYERS[layer].title}</Text>
             <Group justify="space-between">
               <Switch
                 label="Argo floats"
@@ -317,6 +357,7 @@ export function Viewer({ client, createRenderer }: Props) {
               <Text size="xs">{((range.minimum + range.maximum) / 2).toFixed(1)}</Text>
               <Text size="xs">{range.maximum.toFixed(1)}</Text>
             </Group>
+            <Text size="xs" c="dimmed" mt={6}>{resolutionNote(shownFactor)}</Text>
           </Paper>
         </div>
       )}
@@ -324,4 +365,11 @@ export function Viewer({ client, createRenderer }: Props) {
       <ProfileDrawer profile={state.profile} onClose={() => dispatch({ type: "profileClosed" })} />
     </div>
   );
+}
+
+/** How the cells on screen relate to the model's own cells (S4's record). */
+function resolutionNote(factor: number): string {
+  return factor <= 1
+    ? "Model cells at source resolution"
+    : `Zoomed out: each cell is the mean of ${factor}×${factor} model cells; zoom in for source cells`;
 }

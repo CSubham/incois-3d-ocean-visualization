@@ -45,7 +45,7 @@ const engine = vi.hoisted(() => {
       pick: () => state.pick,
     };
     imageryLayers = { addImageryProvider() {} };
-    camera = { setView() {}, flyToBoundingSphere() {} };
+    camera = { setView() {}, flyToBoundingSphere() {}, moveEnd: { addEventListener() {} } };
     entities = { items: [] as any[], add(e: any) { this.items.push(e); return e; }, remove(e: any) { this.items = this.items.filter((i) => i !== e); } };
     constructor() {
       if (state.failMount) throw new Error("no WebGL");
@@ -119,7 +119,7 @@ const markers: MarkerSet = {
 };
 
 function mounted() {
-  const renderer = new CesiumRenderer(1000);
+  const renderer = new CesiumRenderer(1000, 1000);
   const events: RendererEvent[] = [];
   renderer.onEvent((event) => events.push(event));
   renderer.mount({} as HTMLElement);

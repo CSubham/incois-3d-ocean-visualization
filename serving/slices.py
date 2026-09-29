@@ -2,12 +2,17 @@
 
 Like observations, a slice of an immutable stored version is bounded work
 and a pure function of its request, so it takes the synchronous path and
-keeps no job state. Transport-neutral; the HTTP adapter translates.
+keeps no job state. Because it is a pure function, the few most recent
+products are kept: a descriptor request and its /data twin (and a replayed
+animation step) are then built once. Transport-neutral; the HTTP adapter
+translates.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,6 +58,7 @@ class SliceService:
         maximum_cells: int,
         maximum_display_cells: int = 2_000_000,
         display_side: int = 4096,
+        retained_products: int = 16,
     ) -> None:
         self._scalar = scalar
         self._vector = vector
@@ -62,6 +68,10 @@ class SliceService:
         self._maximum_display_cells = maximum_display_cells
         #: Longest delivered side, within every WebGL2 texture limit.
         self._display_side = display_side
+        #: Recent scalar products by request; products are immutable.
+        self._retained: OrderedDict[tuple[Any, ...], DepthSliceProduct] = OrderedDict()
+        self._retained_limit = retained_products
+        self._retained_lock = threading.Lock()
 
     def scalar(self, window: SliceWindow, variable: str,
                display_cells: int | None = None) -> DepthSliceProduct:
@@ -71,11 +81,21 @@ class SliceService:
             raise RequestRejected("invalid_request", "maximum_cells must be positive")
         budget = min(display_cells or self._maximum_display_cells,
                      self._maximum_display_cells)
+        key = (window, variable, budget)
+        with self._retained_lock:
+            if key in self._retained:
+                self._retained.move_to_end(key)
+                return self._retained[key]
         request = self._request(lambda: ManagedDepthSliceRequest(
             window.dataset_version_id, self._selection(window, variable),
             maximum_cells=self._maximum_cells, display_cells=budget,
             display_side=self._display_side))
-        return self._run(self._scalar, request)
+        product: DepthSliceProduct = self._run(self._scalar, request)
+        with self._retained_lock:
+            self._retained[key] = product
+            while len(self._retained) > self._retained_limit:
+                self._retained.popitem(last=False)
+        return product
 
     def vector(self, window: SliceWindow, eastward: str,
                northward: str) -> VectorSliceProduct:

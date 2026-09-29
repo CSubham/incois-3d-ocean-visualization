@@ -149,3 +149,21 @@ def test_a_non_positive_cell_budget_is_refused():
     response = _client().get("/api/v1/depth-slices",
                              params={**WINDOW, "variable": "water_temp", "maximum_cells": 0})
     assert response.status_code == 400
+
+
+def test_a_descriptor_and_its_data_are_built_once():
+    query = _query_with_currents()
+    calls = []
+    build = managed_depth_slice_builder(query)
+
+    def counting(request):
+        calls.append(request)
+        return build(request)
+
+    service = SliceService(scalar=counting, vector=managed_vector_slice_builder(query),
+                           maximum_cells=1000)
+    executor = LocalExecutor(fixtures.builder(), maximum_points=100, maximum_cells=1000)
+    client = TestClient(create_app(RequestCoordinator(executor), slices=service))
+    body = client.get("/api/v1/depth-slices", params={**WINDOW, "variable": "water_temp"}).json()
+    client.get(body["data"]["url"])
+    assert len(calls) == 1

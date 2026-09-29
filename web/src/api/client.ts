@@ -109,7 +109,8 @@ export interface DataClient {
   /** Submit and wait until the request finishes, succeeded or failed. */
   pointField(intent: PointFieldIntent, signal?: AbortSignal): Promise<RequestView>;
   productData(url: string, signal?: AbortSignal): Promise<ArrayBuffer>;
-  depthSlice(window: SliceWindow, variable: string, signal?: AbortSignal): Promise<SliceDescriptor>;
+  /** One level fitted by S4 to ``maximumCells`` (the view budget). */
+  depthSlice(window: SliceWindow, variable: string, maximumCells?: number, signal?: AbortSignal): Promise<SliceDescriptor>;
   vectorSlice(window: SliceWindow, eastward: string, northward: string, signal?: AbortSignal): Promise<VectorDescriptor>;
 }
 
@@ -160,8 +161,11 @@ export class HttpDataClient implements DataClient {
     return view;
   }
 
-  depthSlice(window: SliceWindow, variable: string, signal?: AbortSignal): Promise<SliceDescriptor> {
-    return this.json(`/api/v1/depth-slices?${query({ ...window, variable })}`, { signal }) as Promise<SliceDescriptor>;
+  depthSlice(window: SliceWindow, variable: string, maximumCells?: number,
+             signal?: AbortSignal): Promise<SliceDescriptor> {
+    const params: Record<string, string | number> = { ...window, variable };
+    if (maximumCells !== undefined) params.maximum_cells = maximumCells;
+    return this.json(`/api/v1/depth-slices?${query(params)}`, { signal }) as Promise<SliceDescriptor>;
   }
 
   vectorSlice(window: SliceWindow, eastward: string, northward: string,

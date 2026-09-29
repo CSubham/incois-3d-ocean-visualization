@@ -24,6 +24,18 @@ export interface GridGeometry {
   firstLatitude: number;
   /** Source rows run south to north. */
   latitudeAscending: boolean;
+  /** Where the image lies on the globe, in -180..180. imageWest > imageEast
+   *  means the image crosses the antimeridian. */
+  imageWest: number;
+  imageEast: number;
+  /** Source column shown in the image's first pixel column: non-zero only
+   *  for a whole-globe field in 0..360, rotated to start at -180. */
+  firstColumn: number;
+}
+
+/** A longitude in -180..180. */
+function wrap180(longitude: number): number {
+  return ((longitude + 180) % 360 + 360) % 360 - 180;
 }
 
 export interface SurfaceStyle {
@@ -59,11 +71,33 @@ export function gridGeometry(longitude: NumericArray, latitude: NumericArray): G
   const halfLon = longitudeStep / 2;
   const halfLat = Math.abs(latitudeStep) / 2;
   const lats = [latitude[0], latitude[latitude.length - 1]];
-  const geometry = {
+  const west = longitude[0] - halfLon;
+  const east = longitude[longitude.length - 1] + halfLon;
+  // One cell of slack: rounded coordinates may overshoot a full circle.
+  if (east - west > 360 + longitudeStep) throw new SurfaceError("the field wraps more than once around the globe");
+  // A regional field keeps its columns; one crossing the antimeridian gets
+  // imageWest > imageEast, which Cesium draws as a crossing rectangle.
+  let imageWest = wrap180(west);
+  let imageEast = wrap180(east);
+  let firstColumn = 0;
+  if (east - west >= 360 - longitudeStep / 2) {
+    // A whole globe (HYCOM runs 0..360): rotate the columns so the image
+    // starts with the cell whose west edge is nearest the antimeridian. The
+    // image then spans -180..180, off by under half a cell.
+    let best = Infinity;
+    for (let c = 0; c < longitude.length; c++) {
+      const fromAntimeridian = wrap180(longitude[c] - halfLon) + 180;
+      const distance = Math.min(fromAntimeridian, 360 - fromAntimeridian);
+      if (distance < best) { best = distance; firstColumn = c; }
+    }
+    imageWest = -180;
+    imageEast = 180;
+  }
+  return {
     columns: longitude.length,
     rows: latitude.length,
-    west: longitude[0] - halfLon,
-    east: longitude[longitude.length - 1] + halfLon,
+    west,
+    east,
     south: Math.max(-90, Math.min(...lats) - halfLat),
     north: Math.min(90, Math.max(...lats) + halfLat),
     longitudeStep,
@@ -71,9 +105,10 @@ export function gridGeometry(longitude: NumericArray, latitude: NumericArray): G
     firstLongitude: longitude[0],
     firstLatitude: latitude[0],
     latitudeAscending: latitudeStep > 0,
+    imageWest,
+    imageEast,
+    firstColumn,
   };
-  if (geometry.east - geometry.west > 360) throw new SurfaceError("the field wraps more than once around the globe");
-  return geometry;
 }
 
 /** RGBA pixels, north row first, one pixel per source cell. */
@@ -88,7 +123,7 @@ export function rasterise(values: NumericArray, mask: Uint8Array, geometry: Grid
   for (let row = 0; row < rows; row++) {
     const sourceRow = geometry.latitudeAscending ? rows - 1 - row : row;
     for (let column = 0; column < columns; column++) {
-      const cell = sourceRow * columns + column;
+      const cell = sourceRow * columns + (column + geometry.firstColumn) % columns;
       const value = values[cell];
       if (mask[cell] || !Number.isFinite(value)) continue;   // transparent
       const [r, g, b] = paletteColour(style.palette, normalise(value, minimum, maximum, style.scale));

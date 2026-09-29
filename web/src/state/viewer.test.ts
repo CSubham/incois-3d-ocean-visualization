@@ -46,8 +46,8 @@ describe("the viewer reducer", () => {
   });
 
   it("keeps a layer's first colour range for the whole animation", () => {
-    let state = viewerReducer(loaded, { type: "frameShown", layer: "temperature", range: { minimum: 20, maximum: 30 }, units: "degC" });
-    state = viewerReducer(state, { type: "frameShown", layer: "temperature", range: { minimum: 0, maximum: 99 }, units: "degC" });
+    let state = viewerReducer(loaded, { type: "frameShown", layer: "temperature", range: { minimum: 20, maximum: 30 }, units: "degC", factor: 1 });
+    state = viewerReducer(state, { type: "frameShown", layer: "temperature", range: { minimum: 0, maximum: 99 }, units: "degC", factor: 1 });
     expect(state.ranges.temperature).toEqual({ minimum: 20, maximum: 30 });
   });
 

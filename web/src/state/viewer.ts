@@ -3,7 +3,7 @@
 // reports it drawn, so state always describes what is on screen.
 
 import type { CatalogueVersion, Failure, MarkerQuery, ObservationVersion } from "../api/client";
-import type { RendererEvent, SurfaceSample } from "../renderer/contract";
+import type { Extent, RendererEvent, SurfaceSample } from "../renderer/contract";
 import type { ProfileState } from "./store";
 
 export type LayerKind = "temperature" | "currents";
@@ -47,6 +47,12 @@ export interface ViewerState {
   ranges: Partial<Record<LayerKind, Range>>;
   units: Partial<Record<LayerKind, string>>;
   probe: SurfaceSample | null;
+  /** Where the camera rests; drives the detail layer. */
+  view: Extent | null;
+  /** S4's reduction factor for the whole-field layer and, when shown, the
+   *  detail layer: source cells per delivered cell along each axis. */
+  baseFactor: number;
+  detail: { phase: "none" | "loading" | "shown" | "failed"; factor: number; failure?: Failure };
   arrows: boolean;
   floats: Floats;
   profile: ProfileState;
@@ -62,7 +68,12 @@ export type ViewerAction =
   /** Advance one step while playing; wraps to the first step. */
   | { type: "tick" }
   | { type: "frameStarted" }
-  | { type: "frameShown"; layer: LayerKind; range: Range; units: string }
+  | { type: "frameShown"; layer: LayerKind; range: Range; units: string; factor: number }
+  | { type: "viewChanged"; extent: Extent | null }
+  | { type: "detailStarted" }
+  | { type: "detailShown"; factor: number }
+  | { type: "detailCleared" }
+  | { type: "detailFailed"; failure: Failure }
   | { type: "frameFailed"; failure: Failure }
   | { type: "toggleArrows" }
   | { type: "toggleFloats" }
@@ -86,6 +97,9 @@ export function initialViewerState(): ViewerState {
     ranges: {},
     units: {},
     probe: null,
+    view: null,
+    baseFactor: 1,
+    detail: { phase: "none", factor: 1 },
     arrows: true,
     floats: { enabled: false, phase: "idle", count: 0 },
     profile: { phase: "closed", pick: null, profile: null },
@@ -134,14 +148,16 @@ export function available(source: SurfaceSource | null, layer: LayerKind): boole
   return layer === "temperature" ? source?.temperature != null : source?.currents != null;
 }
 
-/** Floats inside the surface area, over the observation version's own time span. */
+/** Every float of the first observation version, over its own extent and
+ *  time span (its longitudes need not share the model field's convention). */
 export function floatQuery(state: ViewerState): MarkerQuery | null {
   const version = state.observations?.[0];
-  const area = state.source?.area;
-  if (!version || !area || !version.extent.time_start || !version.extent.time_end) return null;
+  const { west, east, south, north, time_start, time_end } = version?.extent ?? {};
+  if (!version || west == null || east == null || south == null || north == null
+      || !time_start || !time_end) return null;
   return {
-    dataset_version_id: version.dataset_version_id, ...area,
-    time_start: version.extent.time_start, time_end: version.extent.time_end,
+    dataset_version_id: version.dataset_version_id, west, east, south, north,
+    time_start, time_end,
   };
 }
 
@@ -179,10 +195,21 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
         ...state, frame: { phase: "shown" },
         ranges: { ...state.ranges, [action.layer]: state.ranges[action.layer] ?? action.range },
         units: { ...state.units, [action.layer]: action.units },
+        baseFactor: action.factor,
         renderer: state.renderer.phase === "failed" ? { phase: "ok" } : state.renderer,
       };
     case "frameFailed":
       return { ...state, frame: { phase: "failed", failure: action.failure }, playing: false };
+    case "viewChanged":
+      return { ...state, view: action.extent };
+    case "detailStarted":
+      return { ...state, detail: { ...state.detail, phase: "loading", failure: undefined } };
+    case "detailShown":
+      return { ...state, detail: { phase: "shown", factor: action.factor } };
+    case "detailCleared":
+      return { ...state, detail: { phase: "none", factor: 1 } };
+    case "detailFailed":
+      return { ...state, detail: { ...state.detail, phase: "failed", failure: action.failure } };
     case "toggleArrows":
       return { ...state, arrows: !state.arrows };
     case "toggleFloats":
@@ -203,6 +230,7 @@ export function viewerReducer(state: ViewerState, action: ViewerAction): ViewerS
       const { event } = action;
       switch (event.type) {
         case "probe": return { ...state, probe: event.sample };
+        case "view": return { ...state, view: event.extent };
         case "pick": return { ...state, profile: { phase: "loading", pick: event.marker, profile: null } };
         case "unsupported": return { ...state, renderer: { phase: "unsupported", reason: event.reason } };
         case "contextLost": return { ...state, renderer: { phase: "lost", reason: event.reason }, playing: false };

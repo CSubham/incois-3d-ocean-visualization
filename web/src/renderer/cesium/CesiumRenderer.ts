@@ -25,9 +25,9 @@ import type { MarkerSet } from "../../api/observationWire";
 import type { NumericArray, PointFieldArrays, ProductDescriptor } from "../../api/wire";
 import { logScaleProblem, normalise, paletteColour } from "../colour";
 import type {
-  ArrowSet, DisplayOutcome, DisplayState, FieldOutcome, MarkerOutcome, PointSample,
+  ArrowSet, DisplayOutcome, DisplayState, Extent, FieldOutcome, MarkerOutcome, PointSample,
   Renderer, RendererCapabilities, RendererCommand, RendererEvent, SurfaceField,
-  SurfaceOutcome, SurfaceSample, SurfaceStyle,
+  SurfaceOutcome, SurfaceSample, SurfaceSlot, SurfaceStyle,
 } from "../contract";
 import { markerPick } from "../markers";
 import { cellAt, gridGeometry, rasterise, SurfaceError, type GridGeometry } from "../surface";
@@ -72,14 +72,17 @@ export class CesiumRenderer implements Renderer {
   private display?: DisplayState;
   private hovered: number | null = null;
   private markers?: { collection: PointPrimitiveCollection; set: MarkerSet };
-  private surface?: Surface;
+  private readonly surfaces: Partial<Record<SurfaceSlot, Surface>> = {};
   /** Increments per hand-over; an image finishing after a newer one is dropped. */
-  private surfaceGeneration = 0;
+  private readonly surfaceGeneration: Record<SurfaceSlot, number> = { base: 0, detail: 0 };
   private probedCell: number | null = null;
   private arrows?: BillboardCollection;
 
-  constructor(maximumPoints: number) {
-    this.capabilities = { engine: "CesiumJS on WebGL2", maximumPoints };
+  constructor(maximumPoints: number, maximumSurfaceCells: number) {
+    this.capabilities = {
+      engine: "CesiumJS on WebGL2", maximumPoints, maximumSurfaceCells,
+      maximumTextureSide: textureSideLimit(),
+    };
   }
 
   mount(container: HTMLElement): void {
@@ -121,6 +124,7 @@ export class CesiumRenderer implements Renderer {
       ScreenSpaceEventType.LEFT_CLICK);
     // Start over the northern Indian Ocean.
     this.viewer.camera.setView({ destination: Cartesian3.fromDegrees(78, 5, 9_000_000) });
+    this.viewer.camera.moveEnd.addEventListener(() => this.emit({ type: "view", extent: this.viewExtent() }));
   }
 
   showPointField(descriptor: ProductDescriptor, arrays: PointFieldArrays): FieldOutcome {
@@ -266,7 +270,7 @@ export class CesiumRenderer implements Renderer {
     return { status: "applied" };
   }
 
-  async showSurface(field: SurfaceField, style: SurfaceStyle): Promise<SurfaceOutcome> {
+  async showSurface(field: SurfaceField, style: SurfaceStyle, slot: SurfaceSlot = "base"): Promise<SurfaceOutcome> {
     const viewer = this.viewer;
     if (!viewer) return { status: "refused", reason: "the 3D view is not available" };
     let geometry: GridGeometry;
@@ -280,7 +284,7 @@ export class CesiumRenderer implements Renderer {
       if (error instanceof SurfaceError) return { status: "refused", reason: error.message };
       throw error;
     }
-    const generation = ++this.surfaceGeneration;
+    const generation = ++this.surfaceGeneration[slot];
     const canvas = document.createElement("canvas");
     canvas.width = geometry.columns;
     canvas.height = geometry.rows;
@@ -291,25 +295,28 @@ export class CesiumRenderer implements Renderer {
     let provider: SingleTileImageryProvider;
     try {
       provider = await SingleTileImageryProvider.fromUrl(url, {
-        rectangle: Rectangle.fromDegrees(geometry.west, geometry.south, geometry.east, geometry.north),
+        rectangle: Rectangle.fromDegrees(geometry.imageWest, geometry.south, geometry.imageEast, geometry.north),
       });
     } finally {
       URL.revokeObjectURL(url);
     }
-    if (generation !== this.surfaceGeneration || this.viewer !== viewer) return { status: "superseded" };
+    if (generation !== this.surfaceGeneration[slot] || this.viewer !== viewer) return { status: "superseded" };
 
     // The new layer goes on top of the old one, which stays visible until the
     // globe has built every tile of the new one; only then is it removed, so
     // an animation step never shows an empty sea.
     const layer = new ImageryLayer(provider, { alpha: SURFACE_ALPHA });
     viewer.imageryLayers.add(layer);
+    // Detail always draws above the whole-field layer.
+    const detail = this.surfaces.detail;
+    if (slot === "base" && detail) viewer.imageryLayers.raiseToTop(detail.layer);
     await tilesSettled(viewer);
-    if (generation !== this.surfaceGeneration || this.viewer !== viewer) {
+    if (generation !== this.surfaceGeneration[slot] || this.viewer !== viewer) {
       if (this.viewer === viewer && !viewer.isDestroyed()) viewer.imageryLayers.remove(layer, true);
       return { status: "superseded" };
     }
-    const previous = this.surface;
-    this.surface = { layer, geometry, field };
+    const previous = this.surfaces[slot];
+    this.surfaces[slot] = { layer, geometry, field };
     if (previous) viewer.imageryLayers.remove(previous.layer, true);
     this.probedCell = null;
     viewer.scene.requestRender();
@@ -320,14 +327,16 @@ export class CesiumRenderer implements Renderer {
     return { status: "shown", shownCells: field.values.length - hidden, hiddenMissingCells: hidden };
   }
 
-  clearSurface(): void {
-    this.surfaceGeneration++;   // an image still loading is dropped
-    const viewer = this.viewer;
-    if (!viewer || !this.surface) return;
-    viewer.imageryLayers.remove(this.surface.layer, true);
-    this.surface = undefined;
+  clearSurface(slot?: SurfaceSlot): void {
+    for (const which of slot ? [slot] : (["base", "detail"] as const)) {
+      this.surfaceGeneration[which]++;   // an image still loading is dropped
+      const surface = this.surfaces[which];
+      if (!surface || !this.viewer) continue;
+      this.viewer.imageryLayers.remove(surface.layer, true);
+      delete this.surfaces[which];
+    }
     this.setProbe(null);
-    viewer.scene.requestRender();
+    this.viewer?.scene.requestRender();
   }
 
   showArrows(set: ArrowSet, maximumSpeed: number): MarkerOutcome {
@@ -452,7 +461,7 @@ export class CesiumRenderer implements Renderer {
   private hover(position: Cartesian2): void {
     const viewer = this.viewer;
     if (viewer) viewer.scene.canvas.style.cursor = this.markerIndexAt(position) !== null ? "pointer" : "";
-    if (viewer && this.surface) this.probe(position);
+    if (viewer && (this.surfaces.base || this.surfaces.detail)) this.probe(position);
     const layer = this.layer;
     if (!viewer || !layer) return;
     const picked = viewer.scene.pick(position);
@@ -475,8 +484,7 @@ export class CesiumRenderer implements Renderer {
 
   private probe(position: Cartesian2): void {
     const viewer = this.viewer;
-    const surface = this.surface;
-    if (!viewer || !surface) return;
+    if (!viewer) return;
     const cartesian = viewer.camera.pickEllipsoid(position, Ellipsoid.WGS84);
     if (!cartesian) {
       this.setProbe(null);
@@ -485,27 +493,44 @@ export class CesiumRenderer implements Renderer {
     const where = Cartographic.fromCartesian(cartesian);
     const longitude = CesiumMath.toDegrees(where.longitude);
     const latitude = CesiumMath.toDegrees(where.latitude);
-    const cell = cellAt(surface.geometry, longitude, latitude);
-    const { field } = surface;
-    if (cell === null || field.missingValueMask[cell] || !Number.isFinite(field.values[cell])) {
-      this.setProbe(null);
+    // The finest layer covering the position answers.
+    for (const slot of ["detail", "base"] as const) {
+      const surface = this.surfaces[slot];
+      if (!surface) continue;
+      const cell = cellAt(surface.geometry, longitude, latitude);
+      const { field } = surface;
+      if (cell === null) continue;
+      if (field.missingValueMask[cell] || !Number.isFinite(field.values[cell])) break;
+      const key = slot === "detail" ? -1 - cell : cell;
+      if (key === this.probedCell) return;
+      this.probedCell = key;
+      const columns = surface.geometry.columns;
+      const sample: SurfaceSample = {
+        // The delivered cell's own coordinates, not the pointer's.
+        longitude: field.longitude[cell % columns],
+        latitude: field.latitude[Math.floor(cell / columns)],
+        value: field.values[cell],
+        units: field.units,
+      };
+      if (field.components) {
+        sample.eastward = field.components.eastward[cell];
+        sample.northward = field.components.northward[cell];
+      }
+      this.emit({ type: "probe", sample });
       return;
     }
-    if (cell === this.probedCell) return;
-    this.probedCell = cell;
-    const columns = surface.geometry.columns;
-    const sample: SurfaceSample = {
-      // The source cell's own coordinates, not the pointer's.
-      longitude: field.longitude[cell % columns],
-      latitude: field.latitude[Math.floor(cell / columns)],
-      value: field.values[cell],
-      units: field.units,
+    this.setProbe(null);
+  }
+
+  private viewExtent(): Extent | null {
+    const viewer = this.viewer;
+    if (!viewer) return null;
+    const rectangle = viewer.camera.computeViewRectangle(Ellipsoid.WGS84);
+    if (!rectangle) return null;
+    return {
+      west: CesiumMath.toDegrees(rectangle.west), east: CesiumMath.toDegrees(rectangle.east),
+      south: CesiumMath.toDegrees(rectangle.south), north: CesiumMath.toDegrees(rectangle.north),
     };
-    if (field.components) {
-      sample.eastward = field.components.eastward[cell];
-      sample.northward = field.components.northward[cell];
-    }
-    this.emit({ type: "probe", sample });
   }
 
   private setProbe(sample: SurfaceSample | null): void {
@@ -554,6 +579,22 @@ function tilesSettled(viewer: Viewer): Promise<void> {
     const remove = scene.postRender.addEventListener(check);
     scene.requestRender();
   });
+}
+
+/** Longest texture side used, whatever the GPU allows: every WebGL2 device
+ *  supports at least 2048, and 4096 keeps one image near a screen's size. */
+const TEXTURE_SIDE_CAP = 4096;
+
+/** The WebGL2 MAX_TEXTURE_SIZE of this browser, capped; the WebGL2 minimum
+ *  when it cannot be probed. */
+function textureSideLimit(): number {
+  try {
+    const gl = document.createElement("canvas").getContext("webgl2");
+    const side = gl?.getParameter(gl.MAX_TEXTURE_SIZE);
+    return typeof side === "number" ? Math.min(side, TEXTURE_SIDE_CAP) : 2048;
+  } catch {
+    return 2048;
+  }
 }
 
 let arrow: HTMLCanvasElement | undefined;

@@ -29,7 +29,19 @@ export interface RendererCapabilities {
   engine: string;
   /** Points this renderer accepts in one layer; a configured, not tested, figure. */
   maximumPoints: number;
+  /** Cells one surface layer should carry: about a screen's worth. A
+   *  configured, not tested, figure; S7 sends it to S5 as the view budget. */
+  maximumSurfaceCells: number;
+  /** Longest image side this browser's WebGL2 accepts (capped). */
+  maximumTextureSide: number;
 }
+
+/** Degrees; west > east means the extent crosses the antimeridian. */
+export interface Extent { west: number; east: number; south: number; north: number }
+
+/** The coarse layer covers the whole field; the detail layer covers what is
+ *  in view at finer resolution and is drawn above it. */
+export type SurfaceSlot = "base" | "detail";
 
 /** One source cell under the pointer, in physical terms. */
 export interface PointSample {
@@ -108,6 +120,8 @@ export type RendererEvent =
   | { type: "hover"; sample: PointSample | null }
   /** The surface cell under the pointer, or null off the surface. */
   | { type: "probe"; sample: SurfaceSample | null }
+  /** The camera came to rest; null when no part of the globe is in view. */
+  | { type: "view"; extent: Extent | null }
   /** The browser cannot run this renderer at all. */
   | { type: "unsupported"; reason: string }
   /** Rendering stopped; a later successfully shown field clears it. */
@@ -130,8 +144,9 @@ export interface Renderer {
   applyDisplay(display: DisplayState): DisplayOutcome;
   /** Replace the draped surface layer once the new image is ready, so an
    *  animation never flashes an empty globe. */
-  showSurface(field: SurfaceField, style: SurfaceStyle): Promise<SurfaceOutcome>;
-  clearSurface(): void;
+  showSurface(field: SurfaceField, style: SurfaceStyle, slot?: SurfaceSlot): Promise<SurfaceOutcome>;
+  /** Clears one slot, or both when none is named. */
+  clearSurface(slot?: SurfaceSlot): void;
   showArrows(arrows: ArrowSet, maximumSpeed: number): MarkerOutcome;
   clearArrows(): void;
   command(command: RendererCommand): void;
