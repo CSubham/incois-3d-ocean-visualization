@@ -1,5 +1,9 @@
 # incois-3d-ocean-visualization
-A web-based 3D ocean data visualization platform for exploring and analyzing INCOIS oceanographic datasets. It enables interactive visualization across latitude, longitude, depth, and time, helping users examine spatial patterns, temporal changes, and multi-dimensional marine data through an intuitive 3D interface.
+A project for a web-based 3D ocean data visualization platform for exploring
+and analysing oceanographic model fields alongside instrument observations.
+The completed system will support interactive views across latitude,
+longitude, depth and time; the current implementation status is recorded
+below.
 
 ## Start here
 
@@ -16,13 +20,16 @@ docs/            global documentation — system-wide truth
   history/       past decisions and investigations
   tasks/         current work packets
   reviews/       stress tests and readiness reviews
-data/            sample datasets, laid out to match the LLD path convention
-  raw/model/     gridded model fields
-  raw/obs/       point observations
-  curated/       written by S2 at runtime
-  rejected/      written by S2 at runtime
+data/            scientific fixtures and local runtime data
+  raw/model/     protected gridded model fixtures with provenance sidecars
+  raw/obs/       protected observation fixtures with provenance sidecars
+  acquired/      data retrieved by operator acquisition workflows
+  store/         local immutable NetCDF objects written by the thin S3 binding
+  curated/       reserved for a local accepted-data adapter
+  rejected/      retained rejection fixtures or evidence
 scripts/         data acquisition scripts
-ingestion/       S2 Data Ingestion surface
+ingestion/       S2 ingestion plus the first thin S3 storage binding
+docker-compose.yml  development PostgreSQL/PostGIS catalogue
 ```
 
 `AGENTS.md` is the canonical agent instruction file; `CLAUDE.md` points at it.
@@ -36,6 +43,10 @@ does not contain.
 
 ## Status
 
-The HLSA is locked; the LLD is incomplete and under active revision.
-Implementation not yet started. Sample data covering all
-eleven S2 requirements is in place — see `data/README.md`.
+The SRS and HLSA are locked; the LLD is incomplete and under active revision.
+S2 ingestion is complete. The first thin S3 implementation is runtime-wired:
+immutable local NetCDF objects plus a PostgreSQL/PostGIS catalogue and
+observation-profile index. A clean live-database integration proof is still
+pending. S4 processing, S5 serving, S6 rendering and the S7 visualization UI
+have not started. See [docs/STATUS.md](docs/STATUS.md) for evidence and the
+current next steps.

@@ -2,7 +2,7 @@
 
 One page. If it disagrees with the code, the code is right and this needs fixing.
 
-Commit `1deae5f`, 20 September 2026.
+Reviewed against commit `3121909`, 27 September 2026.
 
 ---
 
@@ -11,8 +11,8 @@ Commit `1deae5f`, 20 September 2026.
 | Stage | State | Where |
 |---|---|---|
 | S1 Sources | External. Not ours to build. | — |
-| **S2 Ingestion** | **Complete.** All 11 requirements it owns are covered, one partly. 100 tests. | `ingestion/` |
-| S3 Storage | **Next.** Nothing persists today. | — |
+| **S2 Ingestion** | **Complete.** All 11 requirements it owns are covered, one partly. | `ingestion/` |
+| **S3 Storage** | **Implemented, integration proof pending.** Immutable local NetCDF objects plus a PostgreSQL/PostGIS catalogue and observation-profile index are runtime-wired. | `ingestion/storage/` |
 | S4 Processing | Not started | — |
 | S5 Backend | Not started | — |
 | S6 Rendering | Not started | — |
@@ -22,13 +22,14 @@ S2 has its own operator interface for choosing what to import. **That is not S7.
 
 ## Chosen sequence
 
-**S2 first, completed. Then S3 storage, then a thin visualization path.**
+**S2 first, completed. Prove the thin S3 implementation against a clean live
+database, then build a thin visualization path.**
 
 The earlier plan was to leave S2 half done and go straight to S3, because a
 model-only visualization is demonstrable against a deadline. That was
 reversed: closing S2 turned out to be one adapter path plus one source, not
-weeks, and it means S3 will be designed against gridded arrays *and*
-observation rows on day one rather than reworked later.
+weeks, and the first S3 implementation now stores both gridded arrays and
+observation/profile records rather than requiring a later schema rewrite.
 
 ---
 
@@ -87,32 +88,50 @@ INCOIS's other 11 are two-dimensional satellite surface products — SST, scatte
 - Validation. Nine checks; a dataset without units is refused and never reaches storage.
 - Size guards. OPeNDAP retrieval is lazy, so a whole-globe request was refused at 2.9 trillion values with nothing transferred.
 - Coordinate conventions. 0–360 and −180–180 both handled; edge-crossing named rather than silently wrong.
+- The local scientific object store. Writes are atomic and immutable; stored
+  NetCDF can be opened again, path escape is rejected and overwrite is refused.
+- Storage shape logic. Dataset extents and signed longitude footprints are
+  derived, observation rows are grouped by exact platform/cycle identity, and
+  gridded fields do not invent instrument records.
 
 **Built, but thin**
 
-- **Storage handoff.** Proven architecturally — a complete package crosses `StoragePort` — against a development sink. Not persistence.
+- **S3 persistence.** `PostgresStorage` is the active `StoragePort`. It writes
+  arrays through `LocalObjectStore` and records dataset versions, variables and
+  observation profiles through `storage/schema.sql`. The local object path and
+  derivation logic are tested; a clean live PostgreSQL/PostGIS import and
+  read-back has not yet been recorded as evidence.
 - **Job lifecycle.** The model supports background execution; execution is synchronous and in-memory, so the app must run as one instance and progress cannot be live.
 - **The operator UI.** Functional, deliberately unpolished.
 
 **Not built**
 
-- Everything downstream of S2.
+- S4 processing, the S5 visualization API, S6 rendering and S7 visualization UI.
 - Authentication — by decision, to be platform-level at deploy.
 - Deployment. Local only.
+
+The current automated suite is **109 passed**. It does not connect to a live
+PostgreSQL/PostGIS instance.
 
 ---
 
 ## Known limits
 
-- **S3 does not exist.** Every import evaporates.
+- **S3 still needs a live integration proof.** The code and schema exist and
+  are runtime-wired, but a clean-database model import, observation import,
+  catalogue query and array read-back have not been captured together.
+- **Local NetCDF is the only implemented array backend.** Chunked visualization
+  derivatives and a deployment object-store adapter remain evidence-gated.
 - **Single instance only.** In-memory job store.
-- **Not deployed, and not pushed.**
+- **Not deployed.**
 - **No chlorophyll** from any current source.
 
 ## Next
 
-1. **Push.** Everything exists in one place.
-2. **S3, thin** — object store plus catalogue, designed against gridded arrays
-   *and* observation rows, since both now exist.
-3. **A thin visualization path** — enough of S4/S5/S6 to show one field in 3D
-   with float markers over it.
+1. **Prove S3 end to end** — initialize a clean PostGIS catalogue, import one
+   gridded field and one observation dataset, then verify the stored arrays,
+   catalogue rows, spatial profile lookup and stable references.
+2. **Benchmark the visualization read pattern** — region, time, depth and
+   volume access on representative data before choosing a chunked derivative.
+3. **Build a thin visualization path** — enough of S4/S5/S6/S7 to show one
+   field in 3D with float markers and one selected profile.

@@ -14,7 +14,7 @@ The seven-stage pipeline is fixed by the HLSA and is preserved here. This docume
 
 Each internal stage is a logical responsibility behind a stable boundary contract. One composition point reads deployment configuration and selects the source adapters, storage implementation, processing executor, service entry and delivery adapters, browser data client, UI feature assembly and renderer implementation. Stage logic depends on those contracts rather than provider SDKs, store paths, queue messages, HTTP framework objects or renderer objects. A local deployment may bind the contracts in one process or on one machine; a server deployment may bind the same contracts across containers and managed services without changing the scientific or interaction behavior.
 
-Ingestion and processing use Python, xarray and pandas. NetCDF interpretation uses CF-aware decoding and a separate conformance check. Managed scientific data is accessed through storage and query contracts, while the selected server profile uses PostgreSQL with PostGIS for searchable catalogue and profile information. Expensive visualization preparation can run through a separate Python worker executor so FastAPI remains a lightweight data-serving boundary. The standards route will reuse an existing INCOIS service or GeoServer only after the selected NetCDF is proven through WMS and WCS requests. The browser uses a renderer-facing contract whose first conditional implementation is Three.js on WebGL2; React with TypeScript and Plotly provide the application shell, interaction and profiles.
+Ingestion and processing use Python, xarray and pandas. NetCDF interpretation uses CF-aware decoding and a separate conformance check. Project-generated normalized NetCDF targets the released CF-1.13 convention and is labelled as such only after matching conformance validation; accepted source data retains its declared convention and is not relabelled. Managed scientific data is accessed through storage and query contracts, while the selected server profile uses PostgreSQL with PostGIS for searchable catalogue and profile information. Expensive visualization preparation can run through a separate Python worker executor so FastAPI remains a lightweight data-serving boundary. The standards route prefers an existing conforming INCOIS service; otherwise THREDDS and GeoServer remain comparison candidates until the representative NetCDF is proven through both WMS and WCS requests. The browser uses a renderer-facing contract whose first conditional implementation is Three.js on WebGL2; vtk.js is a focused comparison path if scientific volume rendering becomes the dominant implementation risk. React with TypeScript and Plotly provide the application shell, interaction and profiles.
 
 The selected Azure profile uses Container Apps Jobs for finite ingestion runs, separate Container Apps for the processing worker and FastAPI, Static Web Apps for the browser bundle, PostgreSQL Flexible Server with PostGIS, and ADLS Gen2 as the scientific-store candidate. Azure Files is used only if the selected standards server requires a mounted read-only publication view. The final storage backend and standards server remain explicit decision gates until the INCOIS environment and representative dataset are confirmed.
 
@@ -117,7 +117,7 @@ flowchart TB
 
 Stage purpose: acquire or accept supported source data, parse it, validate it and prepare an accepted handoff to S3.
 
-Selected stage solution: a Python ingestion container can run manually, on a schedule or from an approved source trigger. A Source Connector uses a configuration-assembled registry to retrieve or accept data and selects a registered NetCDF or delimited-text adapter through the common source contract. Provider clients and protocol details remain inside their adapter; the application service contains no provider conditionals. xarray decodes packed values, time and coordinates; cf-xarray assists semantic discovery; and an IOOS Compliance Checker run plus project semantic checks validates NetCDF separately from decoding. Delimited text is validated against its registered source schema. The mapper preserves original names while identifying temperature, salinity, chlorophyll, eastward and northward current components, coordinates, units and exact observation/profile identity. S2 performs no durable catalogue or curated-store write itself and hands the accepted package only through the storage contract.
+Selected stage solution: a Python ingestion container can run manually, on a schedule or from an approved source trigger. A Source Connector uses a configuration-assembled registry to retrieve or accept data and selects a registered NetCDF or delimited-text adapter through the common source contract. Provider clients and protocol details remain inside their adapter; the application service contains no provider conditionals. xarray decodes packed values, time and coordinates; cf-xarray assists semantic discovery; and an IOOS Compliance Checker run plus project semantic checks validates NetCDF separately from decoding. Delimited text is validated against its registered source schema. The mapper preserves original names while identifying temperature, salinity, chlorophyll, eastward and northward current components, coordinates, units and exact observation/profile identity. Incoming data retains its own declared convention. If the system emits a normalized NetCDF publication product, that product targets CF-1.13 and must pass the matching conformance profile before carrying `CF-1.13` in its `Conventions` attribute. S2 performs no durable catalogue or curated-store write itself and hands the accepted package only through the storage contract.
 
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 380, "rankSpacing": 40, "nodeSpacing": 30}, "themeVariables": {"fontSize": "14px"}}}%%
@@ -151,7 +151,7 @@ flowchart TB
 
 Stage purpose: own durable scientific data, catalogue visibility and observation/profile records for downstream use.
 
-Selected stage solution: accepted scientific data is held through deployment-neutral scientific-storage and query contracts. Native accepted NetCDF remains preserved. A storage implementation may additionally materialize a chunked multidimensional representation for repeated subset, processing and visualization access, but its format and chunk shape are selected only after representative workload measurements. Chunk layout, object paths and provider APIs do not escape S3. Searchable catalogue and observation/profile records remain logically distinct from dense model arrays; the selected server profile uses PostgreSQL for dataset, variable and provenance information and PostGIS for spatial lookup. For Azure, Blob/ADLS is the scientific-store candidate. A read-only Azure Files publication view is created only if the selected standards server requires mounted files. The final backend, chunking policy and publication view remain conditional on INCOIS infrastructure and measured access patterns.
+Selected stage solution: accepted scientific data is held through deployment-neutral scientific-storage and query contracts. Native accepted NetCDF remains preserved. A storage implementation may additionally materialize a chunked multidimensional representation for repeated subset, processing and visualization access. Zarr v2 is the first visualization-derivative candidate because it provides chunked multidimensional storage with an OGC Community Standard. Zarr v3 with its sharding codec is a secondary comparison candidate if measured small-chunk object counts or request overhead make sharding relevant. Neither Zarr version, sharding nor any chunk shape is selected until representative regional, depth, time and volume workloads are measured. Chunk layout, object paths and provider APIs do not escape S3. Searchable catalogue and observation/profile records remain logically distinct from dense model arrays; the selected server profile uses PostgreSQL for dataset, variable and provenance information and PostGIS for spatial lookup. For Azure, Blob/ADLS is the scientific-store candidate. A read-only Azure Files publication view is created only if the selected standards server requires mounted files. The final backend, chunking policy and publication view remain conditional on INCOIS infrastructure and measured access patterns.
 
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 380, "rankSpacing": 40, "nodeSpacing": 30}, "themeVariables": {"fontSize": "14px"}}}%%
@@ -253,7 +253,7 @@ flowchart TB
 
 Stage purpose: expose prepared data to the browser and publish standards-based services to external portals.
 
-Selected stage solution: a transport-neutral request coordinator owns S5 behavior, with FastAPI as the selected HTTP entry adapter. It validates browser requests and coordinates preparation through the configured S4 execution adapter. Its control path returns catalogue choices, selected profiles, request status and explicit failures. Its data path delivers prepared model products and geospatial markers as a browser-readable scientific product envelope, binary stream or stable bulk-data reference selected by the serving adapter. Large scientific arrays are not converted into renderer-specific objects or forced through JSON. S5 reads S3 only through catalogue/profile query contracts and the standards publication reference; browser visualization products still pass through S4. These are parallel serving responsibilities, not a processing sequence. The OGC route is separate from the browser API. Existing INCOIS THREDDS and GeoServer remain candidates until one is proven to serve the representative NetCDF correctly through both WMS and WCS; the LLD does not implement those standards itself.
+Selected stage solution: a transport-neutral request coordinator owns S5 behavior, with FastAPI as the selected HTTP entry adapter. It validates browser requests and coordinates preparation through the configured S4 execution adapter. Its control path returns catalogue choices, selected profiles, request status and explicit failures. Its data path delivers prepared model products and geospatial markers as a browser-readable scientific product envelope, binary stream or stable bulk-data reference selected by the serving adapter. Large scientific arrays are not converted into renderer-specific objects or forced through JSON. S5 reads S3 only through catalogue/profile query contracts and the standards publication reference; browser visualization products still pass through S4. These are parallel serving responsibilities, not a processing sequence. The OGC route is separate from the browser API. Reuse of an existing conforming INCOIS service is preferred; otherwise THREDDS and GeoServer remain comparison candidates until one is proven to serve the representative NetCDF correctly through both WMS and WCS. The LLD does not implement those standards itself, and the browser visualization API does not use WMS or WCS as its internal volume-delivery protocol.
 
 #### Browser request and serving path
 
@@ -306,7 +306,7 @@ flowchart TB
 flowchart TB
     PIN["INPUT GATE FROM PORTAL<br/>WMS or WCS request"]:::gate
     SIN["READ-ONLY INPUT FROM S3<br/>Tested standards publication reference"]:::gate
-    M5["OGC STANDARDS ROUTE<br/>In: request and tested publication<br/>Responsibility: delegate to the selected<br/>conforming standards service<br/>Using: proven INCOIS service or GeoServer<br/>Out: standards response"]:::mod
+    M5["OGC STANDARDS ROUTE<br/>In: request and tested publication<br/>Responsibility: delegate to the selected<br/>conforming standards service<br/>Using: tested INCOIS service,<br/>THREDDS or GeoServer<br/>Out: standards response"]:::mod
     POUT["OUTPUT GATE TO PORTAL<br/>WMS or WCS response"]:::out
 
     PIN --> M5
@@ -322,14 +322,14 @@ flowchart TB
 
 Stage purpose: draw the model field and the instrument markers together in one interactive 3D scene.
 
-Selected stage solution: S6 exposes a renderer-facing contract to the browser shell; Three.js on WebGL2 is the conditional first implementation for the rectilinear-grid prototype. S7 does not import Three.js scene, material, texture or buffer objects. It supplies declarative display state and limited one-shot scene commands through the contract. The renderer implementation owns capability checks, scene objects, GPU resource creation and disposal, frame rendering and picking. The Scene and Coordinate Manager converts every product and marker through one documented local coordinate transform, retains physical units and applies vertical exaggeration only as a reversible display transform. Volume, slice, isosurface, vector and observation layers are parallel scene layers. The volume payload may use a tested typed encoding with an explicit mask; it is not assumed to be 8-bit. An unsupported browser, product or payload size produces a capability or error event rather than a blank canvas. A different rendering engine may replace Three.js only by satisfying the same product, state, command and event contract.
+Selected stage solution: S6 exposes a renderer-facing contract to the browser shell; Three.js on WebGL2 is the conditional first implementation for the rectilinear-grid prototype. A small vtk.js comparison prototype is required only if custom Three.js volume ray-casting, slicing or transfer-function work becomes the dominant risk. Zarr-Cesium is a separate prototype candidate only for Zarr-backed geographic depth slices and current-vector layers through the same renderer contract. Its documented cube path renders slice primitives, so it is not evidence for the required full-volume or isosurface paths. The first product does not ship multiple engines. S7 does not import renderer scene, material, texture or buffer objects. It supplies declarative display state and limited one-shot scene commands through the contract. The renderer implementation owns capability checks, scene objects, GPU resource creation and disposal, frame rendering and picking. The Scene and Coordinate Manager converts every product and marker through one documented local coordinate transform, retains physical units and applies vertical exaggeration only as a reversible display transform. Volume, slice, isosurface, vector and observation layers are parallel scene layers. The volume payload may use a tested typed encoding with an explicit mask; it is not assumed to be 8-bit. S6 checks the runtime 3D-texture limit and a tested GPU-memory budget before accepting a volume. If WebGL2 is available but the volume exceeds either limit, S6 emits a slice-fallback capability event; S7 then requests the corresponding S4 slice through S5 and identifies slice mode to the user. If the required rendering capability itself is absent, S6 reports an unsupported state. No capability failure produces a blank canvas. A different rendering engine may replace Three.js only by satisfying the same product, state, command and event contract.
 
 ```mermaid
 %%{init: {"layout": "elk", "flowchart": {"wrappingWidth": 300, "rankSpacing": 35, "nodeSpacing": 20}, "themeVariables": {"fontSize": "14px"}}}%%
 flowchart TB
     IN1["INPUT GATE A FROM S5<br/>Volume, slice, mesh, vectors<br/>or geospatial markers<br/>with scientific descriptor"]
     IN2["INPUT GATE B FROM S7<br/>Declarative palette, range, scale,<br/>opacity and vertical exaggeration<br/>plus limited one-shot scene commands"]
-    M0["WEBGL2 CAPABILITY CHECK<br/>In: browser context<br/>Responsibility: test WebGL2<br/>and required texture support<br/>Using: browser WebGL2 API<br/>Out: proceed or unsupported state"]
+    M0["WEBGL2 CAPABILITY CHECK<br/>In: browser context and product size<br/>Responsibility: test WebGL2, 3D-texture<br/>limit and tested GPU-memory budget<br/>Using: browser WebGL2 API<br/>Out: proceed, slice fallback<br/>or unsupported state"]
     M1["RENDERER FACADE, SCENE AND<br/>COORDINATE MANAGER<br/>In: product transform and display state<br/>Responsibility: shared camera, local frame,<br/>resource lifecycle and depth exaggeration<br/>Using: conditional Three.js implementation<br/>Out: common scene context"]
     subgraph LAYERS["PARALLEL SCENE LAYERS"]
         direction TB
@@ -345,14 +345,14 @@ flowchart TB
         end
         SCALAR_LAYERS ~~~ OVERLAY_LAYERS
     end
-    F["UNSUPPORTED STATE<br/>Required browser capability<br/>or product support unavailable<br/>Out: clear reason to S7"]
+    F["CAPABILITY / FALLBACK STATE<br/>Volume over texture or memory budget:<br/>request corresponding slice<br/>Required WebGL2 unavailable:<br/>report unsupported<br/>Out: clear reason and intent to S7"]
     OUT2["OUTPUT GATE B TO S7<br/>Exact selection, capability<br/>or renderer error event"]
     OUT1["OUTPUT GATE A TO S7<br/>Combined interactive 3D view"]
 
     IN1 --> M0
     IN2 --> M1
     M0 -- "supported" --> M1
-    M0 -- "unsupported" --> F
+    M0 -- "slice fallback or unsupported" --> F
     F --> OUT2
     M1 --> SCALAR_LAYERS
     M1 --> OVERLAY_LAYERS
@@ -385,13 +385,13 @@ flowchart TB
 
 Stage purpose: give the user the controls, and show the profile chart beside the 3D view.
 
-Selected stage solution: React with TypeScript is the selected implementation of an unnumbered modular web application shell around S6 and S7. Feature modules dispatch semantic actions into unidirectional application state; reducers or equivalent pure state transitions own the resulting selection and display state, while data-fetching side effects remain in the configured data client. Changes to dataset, variable, depth or time create a data request to S5. Persistent palette, value range, linear or logarithmic scale, opacity and vertical exaggeration are sent to S6 as declarative display state. One-shot commands are reserved for actions such as camera reset or explicit scene capture and are not used to mirror persistent state. A pick event from S6 carries the exact instrument/profile identity; S7 requests that profile from S5 and Plotly displays depth versus the selected variable with timestamps beside the 3D scene. UI feature modules do not depend directly on FastAPI transport details or the concrete rendering engine. Another UI framework would replace the S7 implementation as a whole rather than leak a second state model into the same shell.
+Selected stage solution: React with TypeScript is the selected implementation of an unnumbered modular web application shell around S6 and S7. Feature modules dispatch semantic actions into unidirectional application state; reducers or equivalent pure state transitions own the resulting selection and display state, while data-fetching side effects remain in the configured data client. Changes to dataset, variable, depth or time create a data request to S5. A slice-fallback capability event from S6 creates a slice-product request through the same S5 path and a visible slice-mode state; it does not make S7 perform processing or bypass S5. Persistent palette, value range, linear or logarithmic scale, opacity and vertical exaggeration are sent to S6 as declarative display state. One-shot commands are reserved for actions such as camera reset or explicit scene capture and are not used to mirror persistent state. A pick event from S6 carries the exact instrument/profile identity; S7 requests that profile from S5 and Plotly displays depth versus the selected variable with timestamps beside the 3D scene. UI feature modules do not depend directly on FastAPI transport details or the concrete rendering engine. Another UI framework would replace the S7 implementation as a whole rather than leak a second state model into the same shell.
 
 ```mermaid
 %%{init: {"layout": "elk", "flowchart": {"wrappingWidth": 300, "rankSpacing": 35, "nodeSpacing": 20}, "themeVariables": {"fontSize": "14px"}}}%%
 flowchart TB
     USER["INPUT GATE A<br/>User selections, controls,<br/>playback and marker actions"]
-    RENDER["INPUT GATE C FROM S6<br/>Combined 3D view<br/>or exact pick event"]
+    RENDER["INPUT GATE C FROM S6<br/>Combined 3D view, exact pick<br/>or capability/fallback event"]
     SERVER["INPUT GATE B FROM S5<br/>Catalogue choices, selected profile,<br/>request status or explicit failure"]
     M1["CONTROL PANEL<br/>In: choices and user actions<br/>Responsibility: expose required<br/>selection and display controls<br/>Using: React with TypeScript<br/>Out: state change"]
     M4["ANIMATION CONTROLLER<br/>In: play, pause or step<br/>Responsibility: advance available<br/>model time steps<br/>Using: React with TypeScript<br/>Out: next time selection"]
@@ -403,7 +403,7 @@ flowchart TB
     OUT["USER-FACING OUTPUT<br/>Browser-native combined 3D view,<br/>controls and selected profile"]
 
     USER --> M1 --> M2
-    RENDER -- "exact pick" --> M2
+    RENDER -- "pick or capability" --> M2
     M2 -- "server data needed" --> M3
     M2 --> M4
     M4 -- "next time" --> M2
@@ -457,11 +457,13 @@ Status distinguishes selected logical design from choices that still require evi
 | D2. Preserve accepted native NetCDF and build independent delivery products | Accepted logical design | Scientific source values remain recoverable; delivery encoding is tested per product and cannot become the source for another product. |
 | D3. Separate scientific arrays from searchable catalogue/profile storage; use PostgreSQL/PostGIS in the selected server profile | Accepted logical design | These data types have different access needs. Query contracts preserve deployment portability without weakening exact profile identity or spatial lookup. |
 | D4. Put S4 execution behind one contract with local and worker bindings | Accepted | Cheap bounded work may run locally; heavy volume or isosurface work must not consume the lightweight API execution boundary. Job transport remains replaceable. |
-| D5. Reuse an existing conforming INCOIS service or use GeoServer for OGC WMS/WCS | Prototype gate | Select only after both WMS and WCS work with the representative NetCDF. The LLD does not implement either standard. |
-| D6. Put S6 behind a renderer-facing contract; use Three.js on WebGL2 for the first rectilinear-grid renderer | Conditional | Selection depends on the representative grid, payload and browser capability tests. UI modules cannot depend on Three.js objects, and unsupported capability must be shown clearly. |
+| D5. Reuse an existing conforming INCOIS service; otherwise compare THREDDS and GeoServer for OGC WMS/WCS | Prototype gate | Select one service only after both WMS and WCS work with the representative NetCDF. The application does not implement either standard, and its visualization API remains separate. |
+| D6. Put S6 behind a renderer-facing contract; use Three.js on WebGL2 first and compare alternatives only on bounded risk paths | Conditional | Selection depends on the representative grid, payload, scientific-volume development effort and browser capability tests. vtk.js is limited to the highest-risk volume path; Zarr-Cesium is limited to Zarr-backed geographic slice and current-vector paths and does not prove full-volume or isosurface support. UI modules cannot depend on renderer objects, a volume that exceeds the tested runtime GPU limits falls back through the normal request path to a slice, unsupported capability is shown clearly, and the first product uses one engine. |
 | D7. Use a registry for known schemas and typed extension modules for new behavior | Accepted | Configuration handles known shapes; a new parser, storage binding, product, transport or renderer is added only where the extension actually requires it. |
 | D8. Select all replaceable implementations at one composition point | Accepted | Local, single-server and scale-out profiles bind the same stage contracts. Provider and deployment conditionals are prohibited from core workflows. |
 | D9. Separate control messages from bulk scientific-data delivery | Accepted logical design | Small requests, descriptors and status remain lightweight while large products can stream or travel by stable reference without coupling the API to one store or renderer. |
+| D10. Evaluate Zarr v2 first and Zarr v3 sharding second as chunked visualization derivatives without replacing accepted NetCDF | Prototype gate | Keep Zarr v2 as the standards-based first candidate. Add Zarr v3 sharding to the comparison only when object count or request overhead is material. Select neither format, sharding policy nor chunk geometry without measured regional, depth, time and volume evidence. |
+| D11. Target CF-1.13 for project-generated normalized NetCDF | Accepted for generated products | CF-1.13 is the released baseline. Incoming data retains its declared convention, and generated output may claim `CF-1.13` only after matching conformance validation. Draft CF releases are not production targets. |
 
 ### 11. Requirement coverage
 
@@ -494,11 +496,11 @@ All 39 active SRS IDs are covered. No requirement ID has been invented.
 ### 12. Architecture validation order
 
 1. Prove S2 acceptance and rejection with the representative HYCOM model files and genuine Argo, Glider, CTD and BGC fixtures, including real-time and delayed-mode context where supplied.
-2. Prove that S3 preserves scientific values and exact profile identity and returns stable managed references without moving ingestion ownership into storage; benchmark candidate chunk layouts against regional, depth, time and volume access before selection.
+2. Prove that S3 preserves scientific values and exact profile identity and returns stable managed references without moving ingestion ownership into storage; compare native NetCDF with Zarr v2 and, when object count or request overhead is material, Zarr v3 sharding. Benchmark chunk layouts against regional, depth, time and volume access before selection.
 3. Prove each S4 product independently from decoded floating-point data, including signed currents, masks, units, coordinates, time and transform metadata; run the same request through local and worker executor bindings and compare the scientific product envelope.
 4. Prove the S7 to S5 to S4 to S5 response loop, including request identity, observable status, cancellation or supersession, explicit failure and both inline and referenced product delivery where supported.
-5. Prove both WMS and WCS before selecting the standards service.
-6. Prove that S6 aligns model fields and markers in one transform, owns and releases its GPU resources, reports unsupported capability explicitly, and sends exact pick events without exposing renderer objects to S7.
+5. Prove both WMS and WCS on the representative NetCDF before selecting an existing INCOIS service, THREDDS or GeoServer; operate only the selected service in the first product.
+6. Prove that S6 aligns model fields and markers in one transform, owns and releases its GPU resources, checks runtime 3D-texture and tested GPU-memory limits, requests a slice fallback through S7 and S5 when a volume exceeds those limits, reports unavailable WebGL2 explicitly, and sends exact pick events without exposing renderer objects to S7. Use Three.js first; run a focused vtk.js comparison only if the scientific-volume path remains the dominant risk. Evaluate Zarr-Cesium only for the Zarr-backed geographic slice or current-vector path, against the same product and renderer contracts; that comparison does not close MVR-001, MVR-002 or MVR-004.
 7. For each replaceable boundary, run shared contract tests against the local binding and at least one fake or server-profile binding without changing adjacent-stage workflow code.
 8. Recheck all 39 SRS IDs against observable evidence from the complete browser workflow.
 
@@ -508,13 +510,18 @@ Official documentation used to validate selected technologies and the implementa
 
 - xarray, NetCDF reading with CF decoding, lazy loading and coordinate selection: https://docs.xarray.dev/en/stable/user-guide/io.html
 - xarray backend entry points, typed plugin registration and lazy backend arrays: https://docs.xarray.dev/en/stable/internals/how-to-add-new-backend.html
+- CF Conventions releases and conformance documents; CF-1.13 is the released baseline and CF-1.14 is a working draft: https://cfconventions.org/conventions.html
 - cf-xarray, interpretation of CF metadata and coordinate semantics: https://cf-xarray.readthedocs.io/en/latest/
 - IOOS Compliance Checker, automated checks for CF and related conventions: https://ioos.github.io/compliance-checker/
 - Dask array chunking, workload alignment and storage-chunk alignment: https://docs.dask.org/en/stable/array-chunks.html
+- OGC Zarr Storage Specification 2.0 Community Standard, the first chunked visualization-derivative candidate: https://www.ogc.org/standards/zarr-storage-specification/
+- Zarr v3 core specification and indexed sharding codec, secondary comparison candidates rather than an OGC or CF compliance claim: https://zarr-specs.readthedocs.io/en/latest/v3/core/ and https://zarr-specs.readthedocs.io/en/latest/v3/codecs/sharding-indexed/
 - ERDDAP griddap, grid subsetting and multiple response representations: https://erddap.gml.noaa.gov/erddap/griddap/documentation.html
 - THREDDS Data Server, catalogue, subsetting, OPeNDAP, WMS and WCS service separation: https://www.unidata.ucar.edu/software/tds
 - Xpublish, FastAPI-based dataset serving with configurable routers and plugins: https://xpublish.readthedocs.io/en/latest/api/generated/xpublish.Rest.html
 - three.js Data3DTexture, 3D textures for volume rendering: https://threejs.org/docs/pages/Data3DTexture.html
+- vtk.js volume rendering and scientific-visualization examples, used only for the focused comparison gate: https://kitware.github.io/vtk-js/
+- Zarr-Cesium, direct Zarr-backed Cesium slice and current-vector providers; comparison evidence for those paths only, not full-volume ray marching or isosurface extraction: https://noc-oi.github.io/zarr-cesium/docs/
 - deck.gl layer lifecycle, renderer-owned initialization, update, picking and finalization: https://deck.gl/docs/developer-guide/custom-layers/layer-lifecycle
 - ParaView client, data-server and render-server separation for local and distributed visualization: https://docs.paraview.org/en/v5.11.2/Tutorials/SelfDirectedTutorial/visualizingLargeModels.html
 - Kepler.gl, modular Redux-managed application state with side effects outside reducers: https://docs.kepler.gl/
