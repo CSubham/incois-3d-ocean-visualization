@@ -145,7 +145,10 @@ class ScalarGridDescriptor:
 
 @dataclass(frozen=True)
 class GeographicBounds:
-    """Inclusive bounds expressed in the source longitude convention."""
+    """Inclusive bounds. Longitude may use either convention (-180..180 or
+    0..360): the subsetter selects by angle eastward from ``west``, so
+    ``east`` may exceed 180 or 360 to cross a seam, spanning at most 360
+    degrees."""
 
     west: float
     east: float
@@ -161,9 +164,10 @@ class GeographicBounds:
                 "south must be less than or equal to north")
         if self.west > self.east:
             raise InvalidRequestError(
-                "west must be less than or equal to east; antimeridian-"
-                "crossing requests require an explicit policy and are not "
-                "supported by this subsetter")
+                "west must be less than or equal to east; to cross the "
+                "antimeridian, give east beyond 180 (for example 170 to 190)")
+        if self.east - self.west > 360:
+            raise InvalidRequestError("longitude bounds span more than 360 degrees")
 
 
 @dataclass(frozen=True)

@@ -118,18 +118,20 @@ function currentsOf(version: CatalogueVersion): SurfaceSource["currents"] {
   return pair ? { eastward: pair[0], northward: pair[1] } : null;
 }
 
-/** The gridded version best suited to the surface views: both layers first,
- *  then the most time steps, then the newest. */
+/** The gridded version best suited to the surface view: sea temperature
+ *  first, then the widest area covered, then the most time steps. */
 export function surfaceSource(versions: CatalogueVersion[]): SurfaceSource | null {
   const candidates = versions.filter((v) =>
     v.geometry === "grid" && (v.time_values?.length ?? 0) > 0 && (v.depth_values?.length ?? 0) > 0
     && v.extent.west !== null && v.extent.east !== null && v.extent.south !== null && v.extent.north !== null
     && (temperatureOf(v) !== null || currentsOf(v) !== null));
+  const covered = (v: CatalogueVersion) =>
+    (v.extent.east! - v.extent.west!) * (v.extent.north! - v.extent.south!);
   const score = (v: CatalogueVersion) =>
-    [Number(temperatureOf(v) !== null) + Number(currentsOf(v) !== null), v.time_values!.length, v.created_at] as const;
+    [Number(temperatureOf(v) !== null), covered(v), v.time_values!.length, v.created_at] as const;
   candidates.sort((a, b) => {
     const [x, y] = [score(a), score(b)];
-    return y[0] - x[0] || y[1] - x[1] || y[2].localeCompare(x[2]);
+    return y[0] - x[0] || y[1] - x[1] || y[2] - x[2] || y[3].localeCompare(x[3]);
   });
   const best = candidates[0];
   if (!best) return null;

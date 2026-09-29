@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { detailExtent } from "./detail";
 
-const globe360 = { west: 0, east: 359.92, south: -80, north: 90 };
+// Catalogue extents are signed, whatever the stored axis convention.
+const globe = { west: -179.92, east: 180, south: -80, north: 90 };
 const indian = { west: 30, east: 120, south: -30, north: 30 };
 
 describe("detail extent", () => {
@@ -19,13 +20,15 @@ describe("detail extent", () => {
       .toEqual({ west: 79, east: 91.5, south: 4, north: 16.5 });
   });
 
-  it("maps a western-hemisphere view onto a 0..360 field", () => {
-    const extent = detailExtent(globe360, { west: -70, east: -60, south: 10, north: 20 }, 4)!;
-    expect(extent.west).toBe(289);
-    expect(extent.east).toBe(301);
+  it("sends a western-hemisphere view as signed longitudes", () => {
+    const extent = detailExtent(globe, { west: -70, east: -60, south: 10, north: 20 }, 4)!;
+    expect(extent.west).toBe(-71);
+    expect(extent.east).toBe(-59);
   });
 
-  it("leaves a view across the field's seam to the base layer", () => {
-    expect(detailExtent(globe360, { west: -5, east: 5, south: 0, north: 10 }, 4)).toBeNull();
+  it("sends a view across the antimeridian with east beyond 180", () => {
+    const extent = detailExtent(globe, { west: 170, east: -170, south: 0, north: 10 }, 4)!;
+    expect(extent.west).toBe(168);
+    expect(extent.east).toBe(192);
   });
 });

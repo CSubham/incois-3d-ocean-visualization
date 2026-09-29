@@ -16,15 +16,14 @@ function version(id: string, variables: string[], times = 8, created = "2026-09-
 }
 
 describe("choosing the surface source", () => {
-  it("prefers a version with both layers, then more time steps", () => {
-    const source = surfaceSource([
-      version("temp-only", ["water_temp"], 8),
-      version("both", ["water_temp", "water_u", "water_v"], 4),
-      version("argo", ["TEMP"]),
-    ]);
-    expect(source?.versionId).toBe("both");
-    expect(source?.currents).toEqual({ eastward: "water_u", northward: "water_v" });
+  it("prefers temperature, then the widest area, then more time steps", () => {
+    const regional = version("regional", ["water_temp", "water_u", "water_v"], 4);
+    const global = { ...version("global", ["water_temp"], 8), extent: { ...regional.extent, west: -179.92, east: 180, south: -80, north: 90 } };
+    const source = surfaceSource([regional, global, version("currents", ["water_u", "water_v"], 30)]);
+    expect(source?.versionId).toBe("global");
+    expect(source?.temperature).toBe("water_temp");
     expect(source?.depth).toBe(0);
+    expect(surfaceSource([version("a", ["water_temp"], 4), version("b", ["water_temp"], 8)])?.versionId).toBe("b");
   });
 
   it("reports when nothing can drive the viewer", () => {

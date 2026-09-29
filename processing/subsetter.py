@@ -85,6 +85,39 @@ def _bounded_indices(values: np.ndarray, minimum: float, maximum: float,
     return selected
 
 
+def _longitude_indices(values: np.ndarray, west: float, east: float,
+                       coordinate_name: str) -> tuple[np.ndarray, np.ndarray]:
+    """Cells whose longitude lies from ``west`` eastward to ``east``, in
+    either convention, and the longitudes to deliver for them.
+
+    Selection is by angle eastward from ``west``, so -70..-60 selects the
+    same cells from a 0..360 axis as 290..300 does. Cells keep source order
+    and source values unless the selection crosses the source axis's own
+    seam; then they run eastward from ``west`` and the cells beyond the seam
+    continue by +360, so the delivered axis stays increasing. Source indices
+    always identify the cells exactly.
+    """
+    span = east - west
+    if span >= 360:
+        return np.arange(values.size), values.copy()
+    offset = np.mod(values.astype(np.float64) - west, 360.0)
+    # A cell on the east bound may land at offset ~360 through rounding.
+    offset[offset > 360.0 - 1e-9] = 0.0
+    selected = np.flatnonzero(offset <= span + 1e-9)
+    if selected.size == 0:
+        raise EmptySubsetError(
+            f"longitude bounds [{west}, {east}] select no cells from "
+            f"coordinate {coordinate_name!r}; available extent is "
+            f"[{np.min(values).item()}, {np.max(values).item()}]")
+    # One unbroken run of source cells: no seam inside it.
+    if np.all(np.diff(selected) == 1):
+        return selected, values[selected].copy()
+    ordered = selected[np.argsort(offset[selected], kind="stable")]
+    delivered = values[ordered].astype(np.float64)
+    turns = np.concatenate([[0.0], np.cumsum(np.diff(delivered) < 0) * 360.0])
+    return ordered, delivered + turns
+
+
 def subset_scalar_field(dataset: xr.Dataset,
                         descriptor: ScalarGridDescriptor,
                         selection: ScalarSelection,
@@ -175,9 +208,9 @@ def subset_scalar_field(dataset: xr.Dataset,
     latitude_indices = _bounded_indices(
         latitude_values, selection.area.south, selection.area.north,
         "latitude", roles.latitude)
-    longitude_indices = _bounded_indices(
+    longitude_indices, delivered_longitudes = _longitude_indices(
         longitude_values, selection.area.west, selection.area.east,
-        "longitude", roles.longitude)
+        roles.longitude)
 
     cells = depth_indices.size * latitude_indices.size * longitude_indices.size
     if maximum_cells is not None and cells > maximum_cells:
@@ -238,7 +271,7 @@ def subset_scalar_field(dataset: xr.Dataset,
                                        for index in longitude_indices),
         depth_values=depth_values[depth_indices],
         latitude_values=latitude_values[latitude_indices],
-        longitude_values=longitude_values[longitude_indices],
+        longitude_values=delivered_longitudes,
         values=values,
         missing_value_mask=missing_mask,
     )

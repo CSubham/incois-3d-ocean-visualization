@@ -15,30 +15,30 @@ function span(west: number, east: number): number {
 }
 
 /**
- * The extent to request at detail resolution, in the field's own longitude
- * convention, or null when the whole-field layer is already enough: the
- * base is at source resolution, or most of the field is in view, or the view
- * straddles the field's longitude seam (then the base layer shows it).
+ * The extent to request at detail resolution, or null when the whole-field
+ * layer is already enough: the base is at source resolution, or most of the
+ * field is in view. Longitudes go to S4 in either convention; a view across
+ * the antimeridian is sent with east beyond 180 (S4 selects by angle).
  */
 export function detailExtent(area: Extent, view: Extent | null, baseFactor: number): Extent | null {
   if (!view || baseFactor <= 1) return null;
-  let { west, east } = view;
-  if (area.east > 180) {
-    // The field runs 0..360: express the view the same way.
-    if (west < 0) west += 360;
-    if (east < 0) east += 360;
-  }
-  if (west >= east) return null;   // crosses the seam in the field's convention
-  const w = Math.max(area.west, west - span(west, east) * MARGIN);
-  const e = Math.min(area.east, east + span(west, east) * MARGIN);
+  const west = view.west;
+  const east = view.east < view.west ? view.east + 360 : view.east;
+  const globe = area.east - area.west >= 359;
+  const lonSpan = span(west, east);
+  const w = globe ? west - lonSpan * MARGIN : Math.max(area.west, west - lonSpan * MARGIN);
+  const e = globe ? east + lonSpan * MARGIN : Math.min(area.east, east + lonSpan * MARGIN);
   const s = Math.max(area.south, view.south - (view.north - view.south) * MARGIN);
   const n = Math.min(area.north, view.north + (view.north - view.south) * MARGIN);
   if (w >= e || s >= n) return null;
-  const share = ((e - w) * (n - s)) / ((area.east - area.west) * (area.north - area.south));
-  if (share >= DETAIL_SHARE) return null;
+  const areaSpan = globe ? 360 : area.east - area.west;
+  const share = ((e - w) * (n - s)) / (areaSpan * (area.north - area.south));
+  if (share >= DETAIL_SHARE || e - w >= 360) return null;
+  const snappedWest = Math.floor(w / SNAP) * SNAP;
+  const snappedEast = Math.ceil(e / SNAP) * SNAP;
   return {
-    west: Math.max(area.west, Math.floor(w / SNAP) * SNAP),
-    east: Math.min(area.east, Math.ceil(e / SNAP) * SNAP),
+    west: globe ? snappedWest : Math.max(area.west, snappedWest),
+    east: globe ? snappedEast : Math.min(area.east, snappedEast),
     south: Math.max(area.south, Math.floor(s / SNAP) * SNAP),
     north: Math.min(area.north, Math.ceil(n / SNAP) * SNAP),
   };
