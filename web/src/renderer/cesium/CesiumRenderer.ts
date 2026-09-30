@@ -120,6 +120,9 @@ export class CesiumRenderer implements Renderer {
       this.emit({ type: "unsupported", reason: "this browser cannot create the WebGL context the globe requires" });
       return;
     }
+    // No Cesium ion service or data is used (the globe is the bundled,
+    // public-domain Natural Earth II), so ion's logo credit does not apply.
+    (this.viewer.cesiumWidget.creditContainer as HTMLElement).style.display = "none";
     const { scene } = this.viewer;
     this.viewer.imageryLayers.addImageryProvider(new GridImageryProvider({
       color: Color.WHITE.withAlpha(0.12), glowColor: Color.TRANSPARENT,

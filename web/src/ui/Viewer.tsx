@@ -453,10 +453,8 @@ export function Viewer({ client, createRenderer }: Props) {
                 label={(index) => formatUtc(source.times[index])}
                 marks={source.times.length <= 40 ? source.times.map((_, index) => ({ value: index })) : undefined}
               />
-              <Text className="mono" size="sm" w={200} ta="right">
-                {state.transition
-                  ? `${formatUtc(state.transition.from).slice(5, 16)} → ${formatUtc(state.transition.to).slice(5)}`
-                  : time ? formatUtc(time) : ""}
+              <Text className="mono" size="sm" w={170} ta="right" style={{ whiteSpace: "nowrap" }}>
+                {time ? formatUtc(time) : ""}
               </Text>
               <div style={{ width: 16 }}>{state.frame.phase === "loading" && <Loader size="xs" />}</div>
             </Group>

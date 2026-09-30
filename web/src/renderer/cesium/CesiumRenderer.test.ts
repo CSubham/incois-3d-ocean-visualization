@@ -46,6 +46,7 @@ const engine = vi.hoisted(() => {
     };
     imageryLayers = { addImageryProvider() {} };
     camera = { setView() {}, flyToBoundingSphere() {}, moveEnd: { addEventListener() {} } };
+    cesiumWidget = { creditContainer: { style: {} } };
     entities = { items: [] as any[], add(e: any) { this.items.push(e); return e; }, remove(e: any) { this.items = this.items.filter((i) => i !== e); } };
     constructor() {
       if (state.failMount) throw new Error("no WebGL");
