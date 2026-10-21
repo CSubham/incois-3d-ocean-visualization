@@ -1,0 +1,300 @@
+SIH 26067 IDEA PPT CONTENT
+Team Astra
+
+Use the official SIH 2026 16:9 template.
+Maximum: 6 slides including the title slide.
+Paste only the slide text and diagram labels.
+LAYOUT NOTE, DO NOT ADD, and checklist sections are author guidance.
+
+
+IMPORTANT CORRECTIONS
+
+- Theme: Smart Automation
+- Category: Software
+- Problem Statement ID: SIH26067
+- Use [ENTER PORTAL TEAM ID] until the official portal ID is confirmed.
+- Do not use SIH_CU_080 as the Team ID unless the portal confirms it.
+- Present completed work, current integration work, and future work separately.
+- Do not claim deployment, full-volume rendering, isosurfaces, or animation as complete.
+
+
+SLIDE 1: TITLE SLIDE
+
+TEXT TO PASTE
+
+SMART INDIA HACKATHON 2026
+
+Problem Statement ID: SIH26067
+
+Develop a web-based interactive 3D visualization platform that integrates
+numerical ocean model outputs and in-situ observations
+
+Theme: Smart Automation
+Category: Software
+Team ID: [ENTER PORTAL TEAM ID]
+Team Name: Astra
+
+VISUAL
+
+- Keep this slide minimal.
+- Use only the official template graphics and required logos.
+- Do not add architecture, features, or screenshots here.
+
+
+SLIDE 2: IDEA TITLE
+
+TITLE
+
+INCOIS 3D Ocean Viewer
+
+SUBTITLE
+
+One browser workspace for ocean models and observations
+
+PROBLEM
+
+- Model fields and in-situ profiles sit in separate tools.
+- Analysts manually match location, time, and depth.
+- Most workflows remain 2D or dataset specific.
+
+SOLUTION
+
+- Display a selected model field on a 3D globe.
+- Overlay Argo and Glider observations in the same scene.
+- Open the exact selected profile beside the model field.
+- Preserve units, timestamps, depth, identity, and QC.
+
+SIMPLE WORKFLOW DIAGRAM
+
+[Select region, time, depth, variable]
+                   v
+[Explore the ocean model on a 3D globe]
+                   v
+[View nearby observation markers]
+                   v
+[Select a marker and inspect its profile]
+
+BOTTOM EVIDENCE STRIP
+
+Prototype evidence: sampled temperature field, Argo markers, exact profile view
+
+DO NOT ADD
+
+- A long problem statement paragraph
+- Generic claims such as revolutionary or AI powered
+- Features that are still planned
+
+
+SLIDE 3: TECHNICAL APPROACH
+
+TITLE
+
+Technical Approach
+
+MAIN DIAGRAM
+
+[HYCOM]   [INCOIS ERDDAP]   [IOOS Glider DAC]
+              \       |       /
+               [Ingest and validate]
+                        v
+          [NetCDF + PostgreSQL/PostGIS]
+                        v
+          [Subset and prepare view data]
+                        v
+             [FastAPI service layer]
+                        v
+       [React + Cesium globe + Plotly profile]
+
+SHORT LABELS FOR THE DIAGRAM
+
+- Input: model grids and instrument profiles
+- Validation: coordinates, units, masks, time, and QC
+- Processing: bounded regional and depth subsets
+- Delivery: metadata plus compact binary products
+- Browser: linked 3D field, markers, and profile chart
+
+TECHNOLOGY LINE
+
+Python, xarray, NumPy, PostgreSQL/PostGIS, FastAPI, React, TypeScript,
+CesiumJS, Plotly
+
+SCIENTIFIC RULE
+
+- Preserve units, coordinates, time, depth, and masks.
+- Keep profile identity, QC, and provenance attached.
+
+LAYOUT NOTE
+
+- Make the pipeline the main visual.
+- Keep the technology line small and secondary.
+- Do not replace the pipeline with a list of technologies.
+
+
+SLIDE 4: FEASIBILITY AND VIABILITY
+
+TITLE
+
+Feasibility and Viability
+
+BUILT AND VERIFIED
+
+- HYCOM, INCOIS ERDDAP, and IOOS data paths verified
+- Ingestion, scientific catalogue, processing, and API implemented
+- Cesium globe shows a sampled model field and Argo markers
+- Marker selection opens the exact profile with QC and timestamps
+
+CURRENT INTEGRATION
+
+- Browser depth-slice layer
+- Surface-current vector layer
+
+NEXT WORK
+
+- Full-volume rendering and isosurfaces
+- Time-step animation
+- Deployment on target infrastructure
+
+RISK AND RESPONSE
+
+- Large data cubes: bounded region, time, and depth requests
+- Data differences: metadata validation and preserved source context
+- Browser limits: point budgets, slices, and visible error states
+
+EVIDENCE STRIP
+
+- Latest recorded backend validation: 343 tests passed with live PostGIS
+- Reviewed browser branch: tests, type-check, and production build passed
+
+HONEST LIMIT
+
+- No public deployment yet
+- Full-volume rendering, isosurfaces, and animation remain planned
+- OGC proof, chlorophyll, and complete CTD/BGC coverage remain open
+
+LAYOUT NOTE
+
+- Use two columns: status on the left, risks on the right.
+- Keep the evidence strip at the bottom.
+- Do not use percentages such as 85% feasible.
+
+
+SLIDE 5: IMPACT AND BENEFITS
+
+TITLE
+
+Impact and Benefits
+
+CURRENT WORKFLOW
+
+Find model data
+        v
+Open a separate model viewer
+        v
+Find observations elsewhere
+        v
+Manually match location, time, and depth
+
+PROPOSED WORKFLOW
+
+Choose region, time, depth, and variable
+        v
+Explore the model field in the browser
+        v
+View observations in the same scene
+        v
+Select a float and inspect its exact profile
+
+BENEFITS
+
+- Fewer tool changes during model-observation comparison
+- Faster inspection of agreement and disagreement
+- Browser access with no specialist desktop viewer
+- Reusable base for future operational analysis tools
+
+PILOT MEASURES
+
+- Time from selection to model-observation comparison
+- API response time and browser render time
+- Correct display of units, masks, timestamps, and QC
+
+QUALIFICATION
+
+- Supports analysis
+- Does not generate forecasts or advisories
+
+LAYOUT NOTE
+
+- Show the two workflows side by side.
+- Keep benefits to four short lines.
+- Do not add unsupported claims about lives saved or percentage improvement.
+
+
+SLIDE 6: RESEARCH AND REFERENCES
+
+TITLE
+
+Research and References
+
+DIFFERENTIATION
+
+- Panoply: desktop inspection of multidimensional scientific arrays
+- INCOIS ERDDAP: dataset discovery, subset access, graphs, and maps
+- ODV/webODV: profile, trajectory, and environmental data analysis
+- Proposed viewer: linked browser 3D model field and selected in-situ profile
+
+PRIMARY DATA AND STANDARDS
+
+- INCOIS ERDDAP: https://erddap.incois.gov.in/erddap/
+- HYCOM Data Server: https://www.hycom.org/dataserver/
+- IOOS Glider DAC: https://gliders.ioos.us/
+- CF Conventions: https://cfconventions.org/
+
+COMPARISON REFERENCES
+
+- NASA Panoply: https://www.giss.nasa.gov/tools/panoply/
+- Ocean Data View: https://odv.awi.de/
+
+PROJECT EVIDENCE
+
+- Repository: https://github.com/CSubham/incois-3d-ocean-visualization
+- Demo: [ADD ONLY AFTER THE PUBLIC LINK IS TESTED]
+
+LAYOUT NOTE
+
+- Use short linked labels or QR codes where permitted.
+- Keep the repository link visible.
+- Do not claim that all existing tools are desktop only.
+- Do not add an untested demo link.
+
+
+FINAL DO AND DON'T CHECKLIST
+
+DO
+
+- Use the supplied 16:9 SIH template.
+- Keep exactly 6 slides including the title.
+- Use short bullets, diagrams, and real screenshots.
+- Give each slide one visual purpose.
+- Use one font family and consistent alignment.
+- Keep screenshots large enough to understand.
+- Separate built, in-progress, and planned work.
+- Export the final presentation as PDF.
+
+DON'T
+
+- Do not paste long paragraphs.
+- Do not shrink text to fit more content.
+- Do not fill every empty area.
+- Do not use dense architecture boxes.
+- Do not list technologies without showing the data flow.
+- Do not use unsupported metrics or unverified competitor claims.
+- Do not hide the repository or demo link.
+- Do not add random logos, colors, or multiple fonts.
+
+
+CONTENT PRIORITY IF A SLIDE FEELS CROWDED
+
+1. Keep the main diagram or screenshot.
+2. Keep the strongest three or four bullets.
+3. Remove layout notes and explanatory labels.
+4. Never solve crowding by using tiny text.
