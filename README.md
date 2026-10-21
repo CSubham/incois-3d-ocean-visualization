@@ -16,7 +16,7 @@ document governs what, and what comes next. Read it before anything else.
 docs/            global documentation — system-wide truth
   project/       locked requirements blueprint (SRS)
   architecture/  locked HLSA, and the working LLD
-  design/        UI and interaction design (S6/S7, not yet started)
+  design/        UI and interaction design (S6/S7)
   history/       past decisions and investigations
   tasks/         current work packets
   reviews/       stress tests and readiness reviews
@@ -29,6 +29,8 @@ data/            scientific fixtures and local runtime data
   rejected/      retained rejection fixtures or evidence
 scripts/         data acquisition scripts
 ingestion/       S2 ingestion plus the first thin S3 storage binding
+processing/      S4 bounded scientific product builders
+serving/         S5 API, wire formats and operational endpoints
 docker-compose.yml  development PostgreSQL/PostGIS catalogue
 ```
 
@@ -44,9 +46,9 @@ does not contain.
 ## Status
 
 The SRS and HLSA are locked; the LLD is incomplete and under active revision.
-S2 ingestion is complete. The first thin S3 implementation is runtime-wired:
-immutable local NetCDF objects plus a PostgreSQL/PostGIS catalogue and
-observation-profile index. A clean live-database integration proof is still
-pending. S4 processing, S5 serving, S6 rendering and the S7 visualization UI
-have not started. See [docs/STATUS.md](docs/STATUS.md) for evidence and the
-current next steps.
+S2 ingestion is complete. S3 has an immutable local object store, a
+PostgreSQL/PostGIS catalogue and recorded live-database proof. Bounded S4
+products and their S5 delivery paths are implemented for the current
+prototype. S6/S7 browser work exists on feature branches but is not yet part
+of `main`. See [docs/STATUS.md](docs/STATUS.md) for evidence and the current
+next steps.

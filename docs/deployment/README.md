@@ -72,4 +72,8 @@ owner.
 - **Web image/build:** arrives with the S6/S7 branch.
 - **Unverified here:** the image was not built in this environment (no
   Docker in the agent sandbox). CI is its first build.
-- **Runtime requirements:** they still include pytest.
+
+The backend image installs runtime dependencies only. Test and type-check
+tools remain in `requirements-dev.txt`, and `.dockerignore` excludes local
+data, generated artifacts, repository metadata and test trees from the build
+context.

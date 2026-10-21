@@ -2,7 +2,8 @@
 
 One page. If it disagrees with the code, the code is right and this needs fixing.
 
-Reviewed against commit `3121909`, 27 September 2026.
+Reviewed against `main` at `8864256` and the named active feature branches,
+21 October 2026.
 
 ---
 
@@ -12,24 +13,24 @@ Reviewed against commit `3121909`, 27 September 2026.
 |---|---|---|
 | S1 Sources | External. Not ours to build. | — |
 | **S2 Ingestion** | **Complete.** All 11 requirements it owns are covered, one partly. | `ingestion/` |
-| **S3 Storage** | **Implemented, integration proof pending.** Immutable local NetCDF objects plus a PostgreSQL/PostGIS catalogue and observation-profile index are runtime-wired. | `ingestion/storage/` |
-| S4 Processing | Not started | — |
-| S5 Backend | Not started | — |
-| S6 Rendering | Not started | — |
-| S7 Interface | Not started | — |
+| **S3 Storage** | **Implemented and live-proven.** Immutable local NetCDF objects plus a PostgreSQL/PostGIS catalogue and observation-profile index are runtime-wired. | `ingestion/storage/` |
+| **S4 Processing** | **Prototype paths implemented.** Bounded scalar point fields, depth slices, observation markers and exact profiles are on `main`; volume, isosurface and general grid transforms remain open. | `processing/` |
+| **S5 Backend** | **Prototype paths implemented.** Catalogue, scalar point-field, marker and exact-profile delivery plus operational probes are on `main`; the depth-slice encoder is not yet runtime-bound. | `serving/` |
+| **S6 Rendering** | **Active feature-branch work.** The reviewed Cesium point-field and observation implementation is not yet merged into `main`; slice and vector work continues on C7 branches. | `feature/c3-m1-browser-c`, C7 branches |
+| **S7 Interface** | **Active feature-branch work.** Selection, display, failure and profile UI exists with the S6 branch but is not yet merged into `main`. | `feature/c3-m1-browser-c`, C7 branches |
 
 S2 has its own operator interface for choosing what to import. **That is not S7.** S7 is the visualization.
 
 ## Chosen sequence
 
-**S2 first, completed. Prove the thin S3 implementation against a clean live
-database, then build a thin visualization path.**
+**S2 and the thin S3 path are complete and proven. Finish review and integration
+of the branch-based S6/S7 prototype, then deploy the bounded path.**
 
 The earlier plan was to leave S2 half done and go straight to S3, because a
 model-only visualization is demonstrable against a deadline. That was
 reversed: closing S2 turned out to be one adapter path plus one source, not
-weeks, and the first S3 implementation now stores both gridded arrays and
-observation/profile records rather than requiring a later schema rewrite.
+weeks. S3 now stores both gridded arrays and observation/profile records, and
+the first bounded S4/S5 product paths are on `main`.
 
 ---
 
@@ -93,45 +94,58 @@ INCOIS's other 11 are two-dimensional satellite surface products — SST, scatte
 - Storage shape logic. Dataset extents and signed longitude footprints are
   derived, observation rows are grouped by exact platform/cycle identity, and
   gridded fields do not invent instrument records.
+- Clean PostgreSQL/PostGIS proof. Migrations, gridded and observation imports,
+  catalogue queries, spatial marker lookup and exact profile read-back were
+  exercised against the live catalogue.
+- Bounded prototype paths. Scalar point fields, observation markers and exact
+  profiles run through S4/S5; depth slices have an S4 builder and S5 wire
+  encoder but are not yet bound into the deployed app. Scientific context is
+  preserved through self-describing wire formats and coded failures.
+- Deployment baseline. The backend has versioned migrations, liveness and
+  readiness probes, structured request logs, an unprivileged image and CI
+  gates.
 
 **Built, but thin**
 
 - **S3 persistence.** `PostgresStorage` is the active `StoragePort`. It writes
   arrays through `LocalObjectStore` and records dataset versions, variables and
-  observation profiles through `storage/schema.sql`. The local object path and
-  derivation logic are tested; a clean live PostgreSQL/PostGIS import and
-  read-back has not yet been recorded as evidence.
-- **Job lifecycle.** The model supports background execution; execution is synchronous and in-memory, so the app must run as one instance and progress cannot be live.
+  observation profiles through versioned migrations. The object backend is
+  still local-filesystem only.
+- **Job lifecycle.** S2 execution is synchronous and in-memory. S4 has a bounded
+  local executor, not a durable distributed worker transport.
 - **The operator UI.** Functional, deliberately unpolished.
 
 **Not built**
 
-- S4 processing, the S5 visualization API, S6 rendering and S7 visualization UI.
+- Full-volume and isosurface products and rendering, time-step animation, OGC
+  proof and a cloud object-store adapter.
+- S6/S7 in `main`; the browser implementation remains on feature branches.
 - Authentication — by decision, to be platform-level at deploy.
-- Deployment. Local only.
+- A public deployment. The repository provides an image and deployment notes,
+  but no cloud resource has been provisioned.
 
-The current automated suite is **109 passed**. It does not connect to a live
-PostgreSQL/PostGIS instance.
+The latest recorded backend validation is **343 passed with live PostGIS**,
+excluding external-provider network tests. The browser branch separately
+records tests, type-check and production-build success.
 
 ---
 
 ## Known limits
 
-- **S3 still needs a live integration proof.** The code and schema exist and
-  are runtime-wired, but a clean-database model import, observation import,
-  catalogue query and array read-back have not been captured together.
 - **Local NetCDF is the only implemented array backend.** Chunked visualization
   derivatives and a deployment object-store adapter remain evidence-gated.
-- **Single instance only.** In-memory job store.
+- **S2 is single-instance.** Its job store is in memory.
+- **Branch integration remains.** The current-vector and browser work must be
+  reviewed and merged before a deployable full-stack revision exists.
 - **Not deployed.**
 - **No chlorophyll** from any current source.
 
 ## Next
 
-1. **Prove S3 end to end** — initialize a clean PostGIS catalogue, import one
-   gridded field and one observation dataset, then verify the stored arrays,
-   catalogue rows, spatial profile lookup and stable references.
-2. **Benchmark the visualization read pattern** — region, time, depth and
-   volume access on representative data before choosing a chunked derivative.
-3. **Build a thin visualization path** — enough of S4/S5/S6/S7 to show one
-   field in 3D with float markers and one selected profile.
+1. **Integrate the active visualization branches** after review and resolve the
+   recorded S6 findings without weakening scientific or resource checks.
+2. **Choose the deployment object path**: mount persistent storage for the
+   current local adapter or implement the approved object-store adapter.
+3. **Run the full-stack deployment gate**: migrations, readiness, bounded model
+   field, observation markers, exact profile, browser build and same-origin API
+   routing on the target cloud environment.

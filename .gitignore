@@ -54,3 +54,6 @@ var/ingestion/
 
 # Stored scientific arrays. The catalogue records them; they are not source.
 data/store/
+
+# Generated deliverables. Keep their source documents under version control.
+/output/

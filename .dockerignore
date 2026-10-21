@@ -1,8 +1,14 @@
-# Only the backend source enters the build context.
+# The backend image needs only these source trees. Keep data, repository
+# metadata, design artifacts and the separately built browser out by default.
 *
-!ingestion
-!processing
-!serving
-**/tests
-**/__pycache__
-**/*.pyc
+!Dockerfile
+!ingestion/
+!ingestion/**
+!processing/
+!processing/**
+!serving/
+!serving/**
+
+**/tests/
+**/__pycache__/
+**/*.py[cod]
